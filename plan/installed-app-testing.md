@@ -29,14 +29,14 @@ gate (`ci/release-artifact-gate`) cannot see.
 
 ## Tracker
 
-| Phase                                  | Status                                                                                                                             |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped |
-| 0. Prove the unknowns on real runners  | In progress. Windows x64 proven locally (below). Runner spike written (`spikes/phase0.ts`, `plan-phase0.yml`); results pending     |
-| 1a. Instrument the app                 | Not started                                                                                                                        |
-| 1. Gate the release on installed smoke | Not started                                                                                                                        |
-| 2. Checks on every pull request        | Not started                                                                                                                        |
-| 3. Deeper journeys, fakes, MCP driver  | Not started                                                                                                                        |
+| Phase                                  | Status                                                                                                                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped                                                |
+| 0. Prove the unknowns on real runners  | In progress. Every required check passes on Mac and Linux, and all but DevTools on Windows (run 2, below). Open: Windows DevTools on the runners, Linux WebDriver's window switch |
+| 1a. Instrument the app                 | Not started                                                                                                                                                                       |
+| 1. Gate the release on installed smoke | Not started                                                                                                                                                                       |
+| 2. Checks on every pull request        | Not started                                                                                                                                                                       |
+| 3. Deeper journeys, fakes, MCP driver  | Not started                                                                                                                                                                       |
 
 ## How the installed app runs
 
@@ -124,6 +124,54 @@ logged its update check, then nothing, and exited 0 about 110 s later. That
 matches the silent "Another office is already running" dialog and someone
 pressing OK. One repeat with the same steps started normally. Phase 0 runs the
 relaunch 20 times on a runner. The log fixes in 1a would have explained it.
+
+## Phase 0 on GitHub's runners
+
+Run 2 (`f8bebe2`, 2026-11-08) against the published 0.0.8:
+https://github.com/itsryanb/Oddboro/actions/runs/42450008989
+
+| Runner                     | Required checks  | First start | Relaunches           | Quit            |
+| -------------------------- | ---------------- | ----------- | -------------------- | --------------- |
+| Windows x64 (Server 2025)  | All but DevTools | 9.2 s       | 20, 4.6 s each       | 0.5 s (kill)    |
+| Windows arm64 (Windows 11) | All but DevTools | 8.0 s       | 20, 4.6 s each       | 0.5 s (kill)    |
+| Ubuntu 22.04 x86_64        | All              | 5.4 s       | 5, 2.5 s each        | 1.5 s (SIGTERM) |
+| Ubuntu 24.04 x86_64        | All              | 6.6 s       | 5, 2.5 s each        | 1.5 s (SIGTERM) |
+| Ubuntu 22.04 arm64         | All              | 3.6 s       | 5, 2.0 s each        | 1.5 s (SIGTERM) |
+| macOS 15 (arm64)           | All              | 9.2 s       | 5, 2.6 to 3.6 s each | 1.6 s (SIGTERM) |
+
+What it answered:
+
+- **Linux.** The AppImage runs under Xvfb with FUSE (`libfuse2`, or
+  `libfuse2t64` on 24.04) and an unlocked GNOME Keyring under
+  `dbus-run-session`, and the keyring check passes through `secret-tool`.
+  SIGTERM to the AppImage reaches the shell.
+- **Mac.** The runner's login keychain is unlocked: no prompt at first start.
+  `codesign`, `spctl` ("accepted source=Notarized Developer ID") and
+  `stapler` pass. `screencapture` works, and System Events can read the app's
+  windows, so Accessibility is allowed on the runner.
+- **Linux WebDriver** attaches to the loading window (`tauri://localhost`)
+  and loses it when the office opens ("no such window"). The office window
+  then shows up as a new handle. Run 3 switches to it.
+- **Windows DevTools** works on a PC (WebView2 157.0.4341.42) but on neither
+  runner: the WebView2 browser starts without the debugging flag, even with a
+  profile of its own. Run 3 records why and tries WebView2's registry key.
+- **The relaunch stall** did not come back in 50 quick relaunches (40 on
+  Windows). It is rare: 1a's dialog logging is the fix, not more retries.
+- **The harness:** a PowerShell call takes 10 to 40 s on the arm64 Windows
+  runner, so the harness keeps them out of loops (Node's pid comes from the
+  shell's log).
+
+Findings for the app itself:
+
+1. **The Windows silent install opens Oddboro afterwards,** on the default
+   port and home. Unexpected for anyone deploying with `/S`.
+2. **The Mac app does not start from a folder reached through a symlink.**
+   Copied under `/var/folders` (`/var` is a symlink), it logged "current_exe()
+   ... contains a symlink" (run 1) and did not answer within 30 s (run 2).
+   Run 3 reads what the dialog says.
+3. **The setup checks are slow on Windows.** `GET /api/setup`, which the
+   Setup window loads, took 9 s on x64 and 35 s on arm64, against under 1 s on
+   Mac and on Ubuntu 24.04 and arm64 (10 s once on Ubuntu 22.04 x86_64).
 
 ## Driving the real window
 

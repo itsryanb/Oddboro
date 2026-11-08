@@ -282,16 +282,29 @@ async function devtoolsDiagnosis(): Promise<string> {
     (r) => r.text(),
     (e: unknown) => `error: ${e instanceof Error ? e.message : e}`
   );
-  let processes = '';
-  try {
-    processes = ps(
-      `@(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object { if ($_.CommandLine -match 'remote-debugging-port=\\d+') { $matches[0] } elseif ($_.CommandLine -match '--type=') { 'child' } else { 'browser, no port' } } | Group-Object | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join ', '`
-    );
-  } catch (e) {
-    processes = String(e);
-  }
-  return `port ${CDP} open: ${await tcp(CDP)}; /json/list: ${describe(list)}; WebView2 processes: ${processes || 'none'}`;
+  const tryPs = (script: string) => {
+    try {
+      return ps(script) || 'none';
+    } catch (e) {
+      return String(e);
+    }
+  };
+  // The browser process's own command line shows whether it took the spike's
+  // profile folder, and so whether any WEBVIEW2_ variable reached it.
+  const browser = tryPs(
+    `@(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | Where-Object { $_.CommandLine -notmatch '--type=' } | ForEach-Object { $_.CommandLine }) -join ' ;; '`
+  );
+  const version = tryPs(
+    `@('HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}','HKLM:\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}','HKCU:\\Software\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' | ForEach-Object { (Get-ItemProperty $_ -ErrorAction SilentlyContinue).pv } | Where-Object { $_ }) -join ', '`
+  );
+  const policies = tryPs(
+    `@('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge' | Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Recurse | ForEach-Object { $_.Name + ' = ' + (($_.Property | Select-Object -First 8) -join ',') } }) -join ' ;; '`
+  );
+  return `port ${CDP} open: ${await tcp(CDP)}; /json/list: ${describe(list)}; WebView2 runtime: ${version}; Edge policies: ${policies}; browser process: ${browser.slice(0, 900)}`;
 }
+
+const POLICY_KEY =
+  'HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
 
 const SHELL_LOG = join(OUT, 'shell.log');
 let launches = 0;
@@ -468,12 +481,19 @@ async function webdriverProbe(appimage: string): Promise<string> {
     session = created.sessionId;
     let last = '';
     let onOffice = 0;
+    // The session starts on the loading window, which closes once the office
+    // answers. The office window then shows up as a new handle to switch to.
     for (let i = 0; i < 60 && onOffice < 3; i++) {
       const url = describe(await wd('GET', `/session/${session}/url`));
-      const handles = describe(await wd('GET', `/session/${session}/window/handles`));
-      const now = `url ${url}, handles ${handles}`;
+      const handles = (await wd('GET', `/session/${session}/window/handles`)) as string[];
+      const now = `url ${url}, handles ${describe(handles)}`;
       if (now !== last) seen.push(`${((Date.now() - t0) / 1000).toFixed(1)}s ${now}`);
       last = now;
+      if (url.includes('no such window') && Array.isArray(handles) && handles.length) {
+        const handle = handles[handles.length - 1];
+        const switched = describe(await wd('POST', `/session/${session}/window`, { handle }));
+        seen.push(`switched to ${handle}: ${switched || 'ok'}`);
+      }
       onOffice = url.includes(BASE) ? onOffice + 1 : 0;
       await sleep(1000);
     }
@@ -741,6 +761,47 @@ if (firstStart) {
   killAll();
 }
 
+// The second run found the WebView2 browser on the runners started without the
+// debugging flag from the environment. WebView2 also reads its arguments from
+// a registry key per program, so try that.
+if (WIN && installDir && firstStart && !results.some((r) => r.step.includes('DevTools') && r.ok))
+  await step('DevTools through the WebView2 registry key', false, async () => {
+    run('reg', [
+      'add',
+      POLICY_KEY,
+      '/v',
+      'oddboro.exe',
+      '/t',
+      'REG_SZ',
+      '/d',
+      `--remote-debugging-port=${CDP}`,
+      '/f'
+    ]);
+    const viaKey = launch(exe);
+    try {
+      await ready(viaKey);
+      const page = await devtoolsPage().catch(async (e: unknown) => {
+        throw new Error(`${e instanceof Error ? e.message : e}. ${await devtoolsDiagnosis()}`);
+      });
+      await until(
+        'page text',
+        async () =>
+          String(await page.evaluate('document.body?.innerText ?? ""')).trim() ? true : undefined,
+        60
+      );
+      const title = await page.evaluate('document.title');
+      const status = await page.evaluate(
+        "fetch('/api/pokes/999999', { method: 'DELETE', headers: { 'content-type': 'application/json' } }).then((r) => r.status)"
+      );
+      writeFileSync(join(OUT, 'page.png'), await page.screenshot());
+      page.close();
+      return `connected: title "${title}", in-page DELETE ${status}, page.png saved`;
+    } finally {
+      await quit(viaKey).catch(() => killAll());
+      sh('reg', ['delete', POLICY_KEY, '/f']);
+    }
+  });
+
 if (WIN && installDir)
   await step('uninstalls silently', false, async () => {
     sh(join(installDir, 'uninstall.exe'), ['/S']);
@@ -770,8 +831,16 @@ if (MAC && installDir)
     );
     await sleep(2000);
     const shot = screenshot('symlinked-start.png');
+    const dialog = sh(
+      'osascript',
+      [
+        '-e',
+        `tell application "System Events" to get value of every static text of every window of (first process whose unix id is ${linked.pid})`
+      ],
+      20_000
+    ).out;
     killAll();
-    return `${outcome}. Screenshot symlinked-start.png (${shot})`;
+    return `${outcome}. On screen: ${dialog || 'no text found'}. Screenshot symlinked-start.png (${shot})`;
   });
 
 if (LINUX && args.webdriver)
