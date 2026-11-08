@@ -170,7 +170,12 @@ jobs:
         shell: bash
         run: |
           echo '{ "version": "9.9.9" }' > apps/desktop/src-tauri/plan-version.conf.json
-          npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json
+          set -o pipefail
+          npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json 2>&1 \
+            | tee "$RUNNER_TEMP/build.log" || {
+            echo "::error title=The build failed::$(tail -40 "$RUNNER_TEMP/build.log" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
+            exit 1
+          }
 
       - name: Smoke test the build
         if: runner.os != 'Linux'
