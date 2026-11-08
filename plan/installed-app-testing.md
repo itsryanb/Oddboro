@@ -183,8 +183,15 @@ What it answered:
 
 Findings for the app itself:
 
-1. **The Windows silent install opens Oddboro afterwards,** on the default
-   port and home. Unexpected for anyone deploying with `/S`.
+1. ~~The Windows silent install opens Oddboro afterwards.~~ Wrong: the test's
+   own path did it. Tauri's installer reads its options from the whole
+   command line, its own path included, and NSIS's `GetOptions` ignores case
+   and splits on `/`. Phase 0 ran `.../_temp/release/Oddboro-x64-setup.exe`,
+   whose `/release` reads as `/R` (open the app when done); the fork's build
+   ran from `.../release/bundle/nsis/`, whose `/nsis` also reads as `/NS` (no
+   shortcuts), so it left no Start menu shortcut. Given a backslashed path,
+   neither happens. An owner never meets this (Explorer and the updater pass
+   backslashes), but it is a quirk worth reporting to Tauri.
 2. **The Mac app does not start from a folder reached through a symlink.**
    Copied under `/var/folders` (`/var` is a symlink), the updater logs
    "StartingBinary found current_exe() that contains a symlink on a

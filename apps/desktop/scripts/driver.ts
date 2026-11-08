@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import { connect } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 export const WIN = process.platform === 'win32';
 export const MAC = process.platform === 'darwin';
@@ -221,23 +221,23 @@ export function dialogText(pid: number): string {
 export type Installed = { exe: string; dir: string; uninstall?: () => Promise<string> };
 
 /**
- * Windows: the per-user NSIS installer, silent. It opens Oddboro when done,
- * with the owner's settings, not the run's: given a newer published version,
- * that copy updates itself within seconds (seen on an older build). So it is
- * closed the moment it shows, and watched for a while in case it comes back.
+ * Windows: the per-user NSIS installer, silent. Its path goes in resolved,
+ * with backslashes: Tauri's installer reads its options from the whole
+ * command line, its own path included, so `.../release/bundle/nsis/...` reads
+ * as /R (open the app when done) and /NS (no shortcuts).
  */
 export async function installWindows(file: string): Promise<Installed> {
-  run(file, ['/S']);
+  run(resolve(file), ['/S']);
   const dir = join(process.env.LOCALAPPDATA ?? '', 'Oddboro');
   const exe = join(dir, 'oddboro.exe');
   if (!existsSync(exe)) throw new Error(`${exe} is not there after the install`);
-  const watchUntil = Date.now() + 15_000;
-  while (Date.now() < watchUntil) {
-    for (const pid of shellPids()) sh('taskkill', ['/F', '/T', '/PID', String(pid)]);
-    await sleep(200);
+  await sleep(3000);
+  const opened = shellPids();
+  if (opened.length) {
+    killAll();
+    sh('taskkill', ['/F', '/IM', 'msedgewebview2.exe']);
+    throw new Error(`the silent install opened Oddboro (${opened.join(', ')}); closed it`);
   }
-  killAll();
-  sh('taskkill', ['/F', '/IM', 'msedgewebview2.exe']);
   const uninstall = async () => {
     sh(join(dir, 'uninstall.exe'), ['/S']);
     await until('the app removed', async () => (!existsSync(exe) ? true : undefined), 90);
