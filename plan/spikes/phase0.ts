@@ -134,8 +134,8 @@ async function until<T>(what: string, f: () => Promise<T | undefined>, secs: num
   throw new Error(`no ${what} within ${secs} s`);
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const r = await fetch(BASE + path, { signal: AbortSignal.timeout(20_000) });
+async function getJson<T>(path: string, secs = 20): Promise<T> {
+  const r = await fetch(BASE + path, { signal: AbortSignal.timeout(secs * 1000) });
   if (!r.ok) throw new Error(`GET ${path}: ${r.status}`);
   return (await r.json()) as T;
 }
@@ -192,19 +192,45 @@ function officeNodes(): number[] {
     .map((l) => Number(l.trim().split(/\s+/)[0]));
 }
 
-/** The shell itself, wherever the bundle put it. */
+/**
+ * The shell itself, wherever the bundle put it. Only the program a process
+ * runs counts, never its arguments: this script's own `--artifact` names the
+ * AppImage.
+ */
 function shellPids(): number[] {
   if (WIN)
-    return ps(`@(Get-Process oddboro -ErrorAction SilentlyContinue).Id -join ' '`)
-      .split(/\s+/)
-      .filter(Boolean)
-      .map(Number);
+    return sh('tasklist', ['/FI', 'IMAGENAME eq oddboro.exe', '/FO', 'CSV', '/NH'])
+      .out.split('\n')
+      .map((l) => Number(l.split('","')[1]))
+      .filter((pid) => pid > 0);
   return sh('ps', ['-eo', 'pid=,args='])
     .out.split('\n')
-    .filter((l) =>
-      /Oddboro\.app\/Contents\/MacOS\/|\.mount_[^/\s]+\/usr\/bin\/oddboro|\.AppImage(\s|$)/.test(l)
+    .map((l) => l.trim().split(/\s+/))
+    .filter(
+      ([pid, program]) =>
+        Number(pid) !== process.pid &&
+        /(\/MacOS\/oddboro|\/usr\/bin\/oddboro|\.AppImage)$/.test(program ?? '')
     )
-    .map((l) => Number(l.trim().split(/\s+/)[0]));
+    .map(([pid]) => Number(pid));
+}
+
+/**
+ * The Node the shell started last, from its "started node, pid N" line.
+ * Listing processes takes seconds on the arm64 Windows runner, too slow to poll.
+ */
+function lastNodePid(): number | undefined {
+  if (!existsSync(logFile())) return undefined;
+  const found = [...readFileSync(logFile(), 'utf8').matchAll(/started node, pid (\d+)/g)].pop();
+  return found ? Number(found[1]) : undefined;
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function killAll(): void {
@@ -229,14 +255,42 @@ function dialogText(pid: number): string {
   }
 }
 
+// WebView2 joins a browser process already running on the same profile and
+// ignores the new arguments, so the spike's runs get a profile of their own.
+const WEBVIEW_PROFILE = WIN ? mkdtempSync(join(tmpdir(), 'oddboro-phase0-webview-')) : '';
+
 function appEnv(): Record<string, string> {
   return {
     ODDBORO_PORT: String(PORT),
     ODDBORO_DB_PORT: String(DB_PORT),
     ODDBORO_HOME: HOME,
     ODDBORO_UPDATE_URL: NO_UPDATES,
-    ...(WIN ? { WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}` } : {})
+    ...(WIN
+      ? {
+          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}`,
+          WEBVIEW2_USER_DATA_FOLDER: WEBVIEW_PROFILE
+        }
+      : {})
   };
+}
+
+/** Why DevTools did not connect: the port, what it lists, and the WebView2 processes' debugging flags. */
+async function devtoolsDiagnosis(): Promise<string> {
+  const list = await fetch(`http://127.0.0.1:${CDP}/json/list`, {
+    signal: AbortSignal.timeout(3000)
+  }).then(
+    (r) => r.text(),
+    (e: unknown) => `error: ${e instanceof Error ? e.message : e}`
+  );
+  let processes = '';
+  try {
+    processes = ps(
+      `@(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object { if ($_.CommandLine -match 'remote-debugging-port=\\d+') { $matches[0] } elseif ($_.CommandLine -match '--type=') { 'child' } else { 'browser, no port' } } | Group-Object | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join ', '`
+    );
+  } catch (e) {
+    processes = String(e);
+  }
+  return `port ${CDP} open: ${await tcp(CDP)}; /json/list: ${describe(list)}; WebView2 processes: ${processes || 'none'}`;
 }
 
 const SHELL_LOG = join(OUT, 'shell.log');
@@ -264,10 +318,15 @@ function screenshot(name: string): string {
   return `${readFileSync(file).length} bytes`;
 }
 
-/** Waits for the office to answer. A dialog, or the shell quitting, fails it at once. */
+/**
+ * Waits for the office to answer. A dialog, or the shell quitting, fails it.
+ * Windows looks for a dialog only after 30 s, then every 15 s: one look takes
+ * seconds on the arm64 runner and would blur a normal start's time.
+ */
 async function ready(app: ChildProcess, secs = 120): Promise<number> {
   const started = Date.now();
-  for (let i = 0; Date.now() - started < secs * 1000; i++) {
+  let lookForDialog = 30_000;
+  while (Date.now() - started < secs * 1000) {
     const answered = await fetch(`${BASE}/api/update`, { signal: AbortSignal.timeout(2000) }).then(
       (r) => r.ok,
       () => false
@@ -278,7 +337,8 @@ async function ready(app: ChildProcess, secs = 120): Promise<number> {
       throw new Error(
         `the shell exited ${app.exitCode} before the office answered. Shell: ${shellTail()}. Log: ${logTail()}`
       );
-    if (WIN && i % 10 === 9) {
+    if (WIN && Date.now() - started > lookForDialog) {
+      lookForDialog += 15_000;
       const text = dialogText(app.pid ?? 0);
       if (text) throw new Error(`the shell shows a dialog: ${text}`);
     }
@@ -291,7 +351,8 @@ async function ready(app: ChildProcess, secs = 120): Promise<number> {
 }
 
 async function allGone(): Promise<boolean> {
-  return !(await tcp(PORT)) && !(await tcp(DB_PORT)) && officeNodes().length === 0;
+  const node = lastNodePid();
+  return !(await tcp(PORT)) && !(await tcp(DB_PORT)) && !(node && alive(node));
 }
 
 /**
@@ -314,7 +375,8 @@ async function quit(app: ChildProcess): Promise<string> {
     if (await gone())
       return `the signal did not reach the shell; a SIGTERM to the shell itself (${shells.join(', ')}) quit it in ${Date.now() - started} ms`;
   }
-  const left = `port ${PORT}: ${await tcp(PORT)}, port ${DB_PORT}: ${await tcp(DB_PORT)}, Node: ${officeNodes().join(', ') || 'none'}`;
+  const node = lastNodePid();
+  const left = `port ${PORT}: ${await tcp(PORT)}, port ${DB_PORT}: ${await tcp(DB_PORT)}, Node ${node ?? '?'} running: ${node ? alive(node) : '?'}`;
   killAll();
   throw new Error(`still running after the quit (${left}); killed`);
 }
@@ -464,10 +526,12 @@ await step('install', true, async () => {
     installDir = join(process.env.LOCALAPPDATA ?? '', 'Oddboro');
     exe = join(installDir, 'oddboro.exe');
   } else if (MAC) {
+    // /Applications, as an owner would. The first run copied it under
+    // /var/folders, and /var is a symlink, which the app refuses.
     const mount = mkdtempSync(join(tmpdir(), 'oddboro-dmg-'));
     run('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mount, args.artifact!]);
-    const apps = mkdtempSync(join(tmpdir(), 'oddboro-apps-'));
-    installDir = join(apps, 'Oddboro.app');
+    installDir = '/Applications/Oddboro.app';
+    sh('rm', ['-rf', installDir]);
     run('ditto', [join(mount, 'Oddboro.app'), installDir]);
     sh('hdiutil', ['detach', mount]);
     const name = run('plutil', [
@@ -515,8 +579,9 @@ if (WIN) {
     const running = shellPids();
     if (running.length) {
       killAll();
+      sh('taskkill', ['/F', '/IM', 'msedgewebview2.exe']);
       await sleep(3000);
-      throw new Error(`it opened Oddboro (${running.join(', ')}); closed it`);
+      throw new Error(`it opened Oddboro (${running.join(', ')}); closed it and its WebView2`);
     }
     return 'nothing running';
   });
@@ -576,8 +641,10 @@ if (firstStart) {
     return `${r.status} ${r.text}`;
   });
   await step('setup checks, with the database ok', true, async () => {
+    // The checks start programs (claude --version and others): over 20 s on the arm64 Windows runner.
     const { checks } = await getJson<{ checks: { id: string; state: string; found: string }[] }>(
-      '/api/setup'
+      '/api/setup',
+      90
     );
     const summary = checks.map((c) => `${c.id}: ${c.state} (${c.found})`).join('; ');
     if (checks.find((c) => c.id === 'database')?.state !== 'ok') throw new Error(summary);
@@ -597,7 +664,9 @@ if (firstStart) {
   if (WIN) {
     let page: Page | undefined;
     await step('the real page renders (DevTools)', true, async () => {
-      page = await devtoolsPage();
+      page = await devtoolsPage().catch(async (e: unknown) => {
+        throw new Error(`${e instanceof Error ? e.message : e}. ${await devtoolsDiagnosis()}`);
+      });
       await until(
         'page text',
         async () =>
@@ -653,7 +722,7 @@ if (firstStart) {
       try {
         starts.push(await ready(app));
         if (i === 1) {
-          const setup = await getJson<{ welcomed?: boolean }>('/api/setup');
+          const setup = await getJson<{ welcomed?: boolean }>('/api/setup', 90);
           if (!setup.welcomed) throw new Error('it forgot the onboarding');
         }
         await quit(app);
@@ -676,10 +745,33 @@ if (WIN && installDir)
   await step('uninstalls silently', false, async () => {
     sh(join(installDir, 'uninstall.exe'), ['/S']);
     await until('the app removed', async () => (!existsSync(exe) ? true : undefined), 90);
-    const entry = ps(
-      `@(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object DisplayName -eq 'Oddboro').Count`
+    const entries = () =>
+      ps(
+        `@(Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' | Where-Object DisplayName -eq 'Oddboro').Count`
+      );
+    const left = await until(
+      'the uninstall entry removed',
+      async () => (entries() === '0' ? '0' : undefined),
+      60
+    ).catch(() => entries());
+    return `oddboro.exe removed; uninstall entries left: ${left}; the office's home ${existsSync(HOME) ? 'kept' : 'removed'}`;
+  });
+
+// Finding from the first run: started from a folder reached through a symlink
+// (/var is one), the app did not start. This shows what the owner would see.
+if (MAC && installDir)
+  await step('a copy reached through a symlink (/var/folders)', false, async () => {
+    const apps = mkdtempSync(join(tmpdir(), 'oddboro-symlinked-'));
+    run('ditto', [installDir, join(apps, 'Oddboro.app')]);
+    const linked = launch(exe.replace(installDir, join(apps, 'Oddboro.app')));
+    const outcome = await ready(linked, 30).then(
+      (ms) => `started in ${ms} ms: no symlink problem`,
+      (e: unknown) => `did not start: ${e instanceof Error ? e.message : e}`
     );
-    return `oddboro.exe removed; uninstall entries left: ${entry}; the office's home ${existsSync(HOME) ? 'kept' : 'removed'}`;
+    await sleep(2000);
+    const shot = screenshot('symlinked-start.png');
+    killAll();
+    return `${outcome}. Screenshot symlinked-start.png (${shot})`;
   });
 
 if (LINUX && args.webdriver)
