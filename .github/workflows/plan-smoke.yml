@@ -159,15 +159,20 @@ jobs:
         shell: bash
         run: node apps/desktop/scripts/smoke.ts --stage --annotate --out "$RUNNER_TEMP/stage-smoke"
 
+      # Newer than any published version, as a release candidate is: the
+      # committed 0.0.1 updates itself to the published one as it opens.
       - name: Build the app, unsigned
-        run: npm run bundle -w @oddboro/desktop
+        shell: bash
+        run: |
+          echo '{ "version": "9.9.9" }' > apps/desktop/src-tauri/plan-version.conf.json
+          npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json
 
       - name: Smoke test the build
         if: runner.os != 'Linux'
         shell: bash
         run: |
           file=$(find apps/desktop/src-tauri/target/release/bundle/${{ matrix.bundle }} -name '${{ matrix.file }}' | head -1)
-          node apps/desktop/scripts/smoke.ts --artifact "$file" --version 0.0.1 --annotate \
+          node apps/desktop/scripts/smoke.ts --artifact "$file" --version 9.9.9 --annotate \
             --out "$RUNNER_TEMP/smoke"
 
       - name: Smoke test the build
@@ -178,7 +183,7 @@ jobs:
           dbus-run-session -- bash -c '
             echo -n smoke | gnome-keyring-daemon --unlock --components=secrets > /dev/null
             xvfb-run -a -s "-screen 0 1440x900x24" node apps/desktop/scripts/smoke.ts \
-              --artifact "$file" --version 0.0.1 --annotate --out "$RUNNER_TEMP/smoke"'
+              --artifact "$file" --version 9.9.9 --annotate --out "$RUNNER_TEMP/smoke"'
 
       - uses: actions/upload-artifact@v4
         if: always()

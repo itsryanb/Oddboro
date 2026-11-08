@@ -220,16 +220,24 @@ export function dialogText(pid: number): string {
 
 export type Installed = { exe: string; dir: string; uninstall?: () => Promise<string> };
 
-/** Windows: the per-user NSIS installer, silent. It opens Oddboro when done, which this closes. */
+/**
+ * Windows: the per-user NSIS installer, silent. It opens Oddboro when done,
+ * with the owner's settings, not the run's: given a newer published version,
+ * that copy updates itself within seconds (seen on an older build). So it is
+ * closed the moment it shows, and watched for a while in case it comes back.
+ */
 export async function installWindows(file: string): Promise<Installed> {
   run(file, ['/S']);
   const dir = join(process.env.LOCALAPPDATA ?? '', 'Oddboro');
   const exe = join(dir, 'oddboro.exe');
   if (!existsSync(exe)) throw new Error(`${exe} is not there after the install`);
-  await sleep(5000);
+  const watchUntil = Date.now() + 15_000;
+  while (Date.now() < watchUntil) {
+    for (const pid of shellPids()) sh('taskkill', ['/F', '/T', '/PID', String(pid)]);
+    await sleep(200);
+  }
   killAll();
   sh('taskkill', ['/F', '/IM', 'msedgewebview2.exe']);
-  await sleep(2000);
   const uninstall = async () => {
     sh(join(dir, 'uninstall.exe'), ['/S']);
     await until('the app removed', async () => (!existsSync(exe) ? true : undefined), 90);
