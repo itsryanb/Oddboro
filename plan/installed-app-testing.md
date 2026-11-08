@@ -29,14 +29,14 @@ gate (`ci/release-artifact-gate`) cannot see.
 
 ## Tracker
 
-| Phase                                  | Status                                                                                                                                                                            |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped                                                |
-| 0. Prove the unknowns on real runners  | In progress. Every required check passes on Mac and Linux, and all but DevTools on Windows (run 2, below). Open: Windows DevTools on the runners, Linux WebDriver's window switch |
-| 1a. Instrument the app                 | Not started                                                                                                                                                                       |
-| 1. Gate the release on installed smoke | Not started                                                                                                                                                                       |
-| 2. Checks on every pull request        | Not started                                                                                                                                                                       |
-| 3. Deeper journeys, fakes, MCP driver  | Not started                                                                                                                                                                       |
+| Phase                                  | Status                                                                                                                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped                                       |
+| 0. Prove the unknowns on real runners  | **Done** (run 9, 2026-11-08). Every required check passes on all six runners, and each system reads and presses its real window: UI Automation, WebDriver, Accessibility |
+| 1a. Instrument the app                 | Not started                                                                                                                                                              |
+| 1. Gate the release on installed smoke | Not started                                                                                                                                                              |
+| 2. Checks on every pull request        | Not started                                                                                                                                                              |
+| 3. Deeper journeys, fakes, MCP driver  | Not started                                                                                                                                                              |
 
 ## How the installed app runs
 
@@ -127,8 +127,10 @@ relaunch 20 times on a runner. The log fixes in 1a would have explained it.
 
 ## Phase 0 on GitHub's runners
 
-Run 2 (`f8bebe2`, 2026-11-08) against the published 0.0.8:
-https://github.com/itsryanb/Oddboro/actions/runs/42450008989
+Nine runs on 2026-11-08 against the published 0.0.8. Timings from run 2
+(`f8bebe2`, https://github.com/itsryanb/Oddboro/actions/runs/42450008989);
+run 9 (`769b68b`, https://github.com/itsryanb/Oddboro/actions/runs/42456137134)
+passed on all six runners with every system driving its real window.
 
 | Runner                     | Required checks  | First start | Relaunches           | Quit            |
 | -------------------------- | ---------------- | ----------- | -------------------- | --------------- |
@@ -147,8 +149,14 @@ What it answered:
   SIGTERM to the AppImage reaches the shell.
 - **Mac.** The runner's login keychain is unlocked: no prompt at first start.
   `codesign`, `spctl` ("accepted source=Notarized Developer ID") and
-  `stapler` pass. `screencapture` works, and System Events can read the app's
-  windows, so Accessibility is allowed on the runner.
+  `stapler` pass. `screencapture` works, and Accessibility is allowed on the
+  runner.
+- **Mac Accessibility drives the real window** (runs 7 to 9). System Events
+  reads the WKWebView page (79 elements: its texts, the room names, the clock,
+  buttons such as "Rename Kitchen"), and `perform action "AXPress"` on Rename
+  Kitchen opens its text field (`AXTextField` appears). List `entire contents`
+  once and walk the list: walked directly, every name comes back empty.
+  Dialogs with no parent window are UserNotificationCenter's, not the app's.
 - **Linux WebDriver drives the real window** (runs 3 and 4). The session
   starts on the loading window (`tauri://localhost`) and loses it when the
   office opens ("no such window"). The office window then shows up as a new
@@ -192,16 +200,17 @@ Findings for the app itself:
 
 ## Driving the real window
 
-| System  | Install                                                                                                                                  | Drive the real window                                                                                                                                                                                                                       | Watch out for                                                                                                                               |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Windows | NSIS with `/S` (case matters), then close the Oddboro it opens. Check the uninstall entry's `DisplayVersion` and the Start menu shortcut | **UI Automation**: read the page's document, texts and buttons, press buttons through `InvokePattern`. Proven on both runners. DevTools (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`) works on a PC only                                        | Modal dialogs block: read them with UI Automation (`#32770`). `windows-latest` is Windows Server, not 10 or 11. PowerShell is slow on arm64 |
-| Linux   | Run the AppImage under `xvfb-run` and `dbus-run-session`, with `libfuse2` (`libfuse2t64` on 24.04) and `gnome-keyring`                   | **WebDriver** through `tauri-driver` and `WebKitWebDriver` (`webkit2gtk-driver`); release builds allow it when `TAURI_WEBVIEW_AUTOMATION=true`. Switch to the new window handle once the loading window closes. Proven on all three runners | wry hands automation the first webview created, which is the loading window                                                                 |
-| Mac     | `hdiutil attach`, then `codesign --verify --deep --strict`, `spctl --assess -vv`, `xcrun stapler validate`, launch                       | None without a WebDriver server built into the app, which a shipped app must not carry. Use requests from outside the window, both header shapes (with and without `Sec-Fetch-Site`), and a screenshot                                      | The Keychain read at first start may prompt on a runner. Screen capture permission on `macos-15` runners is unproven                        |
+| System  | Install                                                                                                                                                        | Drive the real window                                                                                                                                                                                                                       | Watch out for                                                                                                                               |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows | NSIS with `/S` (case matters), then close the Oddboro it opens. Check the uninstall entry's `DisplayVersion` and the Start menu shortcut                       | **UI Automation**: read the page's document, texts and buttons, press buttons through `InvokePattern`. Proven on both runners. DevTools (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`) works on a PC only                                        | Modal dialogs block: read them with UI Automation (`#32770`). `windows-latest` is Windows Server, not 10 or 11. PowerShell is slow on arm64 |
+| Linux   | Run the AppImage under `xvfb-run` and `dbus-run-session`, with `libfuse2` (`libfuse2t64` on 24.04) and `gnome-keyring`                                         | **WebDriver** through `tauri-driver` and `WebKitWebDriver` (`webkit2gtk-driver`); release builds allow it when `TAURI_WEBVIEW_AUTOMATION=true`. Switch to the new window handle once the loading window closes. Proven on all three runners | wry hands automation the first webview created, which is the loading window                                                                 |
+| Mac     | `hdiutil attach`, copy to `/Applications` (not under `/var`), then `codesign --verify --deep --strict`, `spctl --assess -vv`, `xcrun stapler validate`, launch | **Accessibility** through System Events: read the page's texts and buttons, press with `AXPress`. Proven on `macos-15`. No in-page JavaScript, so writes are also checked from Node with both header shapes                                 | A dialog with no parent window is UserNotificationCenter's: read it there. List `entire contents` once before walking it                    |
 
-Other Mac routes, for later if a Mac-only window bug shows up: a separate
-test build (never shipped) with `tauri-plugin-wdio-webdriver` for
-`@wdio/tauri-service`, CrabNebula's paid driver, or the open-source
-`tauri-webdriver` plugin (debug builds).
+Accessibility and UI Automation drive the page as a person does, through
+what it shows, but run no JavaScript in it. Only Linux (and DevTools on a
+Windows PC) can run a script in the page. A WebDriver server inside a test
+build (`tauri-plugin-wdio-webdriver`, never shipped) stays the fallback if a
+Mac-only bug ever needs more.
 
 ## Design
 
@@ -215,8 +224,9 @@ where the stage never ships it.
   `quit({ graceful })`, `uninstall()`
 - `health()`, `log.tail()`, `log.grep()`
 - `actions.*`: the page's own actions (phase 2)
-- `page.click / read / screenshot`: DevTools on Windows, WebDriver on Linux,
-  outside-the-window requests and a screenshot on the Mac
+- `page.read / press / screenshot`: UI Automation on Windows, WebDriver on
+  Linux, Accessibility through System Events on the Mac (Phase 0). DevTools
+  on a Windows PC for a developer's own runs
 - `fakeRuntime(script)` (phase 3)
 
 Callers:
@@ -229,17 +239,18 @@ Callers:
 
 ### The checks
 
-| Check                                                                                              | Catches                                                  | Staged server | Windows     | Linux                        | Mac                           |
-| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------- | ----------- | ---------------------------- | ----------------------------- |
-| Starts in under 60 s with no dialog                                                                | Broken bundle, missing Node, PR #14                      | yes           | yes         | yes                          | yes                           |
-| Reports its version                                                                                | #40 at run time. Gives Linux the check the gate lacks    |               | yes         | yes                          | yes                           |
-| A write with no `Origin` gets 403                                                                  | A guard switched off, which would also pass the next row | yes           | yes         | yes                          | yes                           |
-| Page-shaped writes reach their routes: onboarding 200, `DELETE` poke 404                           | The server side of #25                                   | yes           | in the page | in the page (if 0 proves it) | from Node, both header shapes |
-| Setup checks: database, keyring, Claude found through a stub (`claude.cmd` on Windows)             | PR #18, the built-in database, keyring wiring            | yes           | yes         | yes                          | yes                           |
-| The page renders, screenshot kept                                                                  | Blank window, broken page files                          |               | yes         | yes                          | screenshot only               |
-| Quits with Node and both ports gone                                                                | A leftover Node holding 4500                             | yes           | yes         | yes                          | yes                           |
-| Relaunch keeps its data                                                                            | Migrations, home layout, the stall above                 | yes           | yes         | yes                          | yes                           |
-| Install facts: uninstall entry version, shortcut, signing and notarization, data kept on uninstall | Broken signing, notifications without a shortcut         |               | yes         |                              | yes                           |
+| Check                                                                                              | Catches                                                  | Staged server | Windows                       | Linux                      | Mac                           |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------- | ----------------------------- | -------------------------- | ----------------------------- |
+| Starts in under 60 s with no dialog                                                                | Broken bundle, missing Node, PR #14                      | yes           | yes                           | yes                        | yes                           |
+| Reports its version                                                                                | #40 at run time. Gives Linux the check the gate lacks    |               | yes                           | yes                        | yes                           |
+| A write with no `Origin` gets 403                                                                  | A guard switched off, which would also pass the next row | yes           | yes                           | yes                        | yes                           |
+| Page-shaped writes reach their routes: onboarding 200, `DELETE` poke 404                           | The server side of #25                                   | yes           | from Node, both header shapes | from Node, and in the page | from Node, both header shapes |
+| The real window: read the page, press a button, see it change                                      | A window that shows nothing or ignores clicks            |               | UI Automation                 | WebDriver                  | Accessibility                 |
+| Setup checks: database, keyring, Claude found through a stub (`claude.cmd` on Windows)             | PR #18, the built-in database, keyring wiring            | yes           | yes                           | yes                        | yes                           |
+| The page renders, screenshot kept                                                                  | Blank window, broken page files                          |               | yes                           | yes                        | screenshot only               |
+| Quits with Node and both ports gone                                                                | A leftover Node holding 4500                             | yes           | yes                           | yes                        | yes                           |
+| Relaunch keeps its data                                                                            | Migrations, home layout, the stall above                 | yes           | yes                           | yes                        | yes                           |
+| Install facts: uninstall entry version, shortcut, signing and notarization, data kept on uninstall | Broken signing, notifications without a shortcut         |               | yes                           |                            | yes                           |
 
 ### Covering #25 for real
 
@@ -249,14 +260,16 @@ shape. #25 was the page sending the wrong shape. Three layers:
 1. A lint guard: every write from the page goes through the actions module or
    `api.ts`.
 2. The server-side checks above, on every target.
-3. A real click on Revoke in the real window (Windows and Linux), with the
-   grant set up through the API first (phase 3). It must fail against 0.0.5.
+3. A real click on Revoke in the real window, on every system (UI
+   Automation, WebDriver, Accessibility), with the grant set up through the
+   API first (phase 3). It must fail against 0.0.5.
 
 ## Execution plan
 
-### Phase 0: prove the unknowns (about 1 day)
+### Phase 0: prove the unknowns (done, 2026-11-08)
 
-On real GitHub runners, from a workflow on this branch in the fork:
+Answered in nine runs: see "Phase 0 on GitHub's runners" above. The plan as
+it was:
 
 - Linux: the AppImage under Xvfb on `ubuntu-22.04` and `ubuntu-24.04`, with a
   keyring. WebDriver with `TAURI_WEBVIEW_AUTOMATION=true`: does it attach to
@@ -374,7 +387,9 @@ the app runs with the DevTools port open.
 
 ## What it will not catch
 
-- Mac-only webview behaviour.
+- Script-level checks inside the page on Windows and the Mac. UI Automation
+  and Accessibility read and press what the page shows, but cannot run
+  JavaScript in it.
 - Visual bugs like the lost blur. The clock and the automatic theme make pixel
   comparisons flaky. A person looks at the screenshots.
 - Real Claude runs and real sign-ins (Google, OAuth).
@@ -386,8 +401,9 @@ the app runs with the DevTools port open.
 
 1. Hard rule 14: may the automated journey replace the manual setup walk on
    each system before a release, leaving a spot-check?
-2. Mac: outside-the-window checks and a screenshot, or a separate test build
-   with a WebDriver server, never shipped?
+2. ~~Mac: outside-the-window checks and a screenshot, or a separate test
+   build with a WebDriver server?~~ Settled by Phase 0: Accessibility drives
+   the real Mac window, no test build needed.
 3. Unsigned app builds on PRs: on a label or `apps/desktop` changes
    (recommended), or every PR?
 
