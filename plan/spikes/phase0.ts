@@ -377,14 +377,20 @@ return (n as text) & " elements; roles: " & roleText & " || " & (out as text)`
   ).out;
 }
 
-/** Mac: presses a button in the office window by its name, description or title. */
+/**
+ * Mac: presses a button in the office window by its name, description or
+ * title. The elements are listed once first, as macView does: walking
+ * `entire contents` directly resolved each one afresh, and every name came
+ * back empty (run 8).
+ */
 function macPress(pid: number, name: string): string {
   return sh(
     'osascript',
     [
       '-e',
       `tell application "System Events" to tell (first process whose unix id is ${pid})
-  repeat with e in (entire contents of window 1)
+  set els to entire contents of window 1
+  repeat with e in els
     try
       if role of e is "AXButton" then
         set {n1, d1, t1} to {"", "", ""}
