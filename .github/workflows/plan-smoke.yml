@@ -164,15 +164,28 @@ jobs:
         shell: bash
         run: node apps/desktop/scripts/smoke.ts --stage --annotate --out "$RUNNER_TEMP/stage-smoke"
 
+      # Tauri's bundlers download NSIS (Windows) and linuxdeploy (Linux) from
+      # GitHub releases on every build; one answered 504.
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/AppData/Local/tauri
+            ~/.cache/tauri
+          key: tauri-tools-${{ runner.os }}-2.12.4
+
       # Newer than any published version, as a release candidate is: the
-      # committed 0.0.1 updates itself to the published one as it opens.
+      # committed 0.0.1 updates itself to the published one as it opens. A
+      # failed build gets one more try; the compiled code is cached by then.
       - name: Build the app, unsigned
         shell: bash
         run: |
           echo '{ "version": "9.9.9" }' > apps/desktop/src-tauri/plan-version.conf.json
           set -o pipefail
-          npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json 2>&1 \
-            | tee "$RUNNER_TEMP/build.log" || {
+          build() {
+            npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json 2>&1 \
+              | tee "$RUNNER_TEMP/build.log"
+          }
+          build || { echo "::warning title=The build failed once::trying again"; build; } || {
             echo "::error title=The build failed::$(tail -40 "$RUNNER_TEMP/build.log" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
             exit 1
           }
