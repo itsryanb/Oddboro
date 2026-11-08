@@ -24,8 +24,7 @@ speaks to the shell.
 
 A ledger line waits for its embedding from Ollama (`embed.ts`) for at most
 15 seconds, then is written without one and found by its words; after a
-failure the office skips Ollama for a minute. A stuck Ollama once held every
-write: onboarding never answered.
+failure the office skips Ollama for a minute.
 
 The keychain is the system's own secret store (`@oddboro/ledger/secrets`,
 through `src/lib/server/keychain.ts`). In the Mac app the shell keeps it:

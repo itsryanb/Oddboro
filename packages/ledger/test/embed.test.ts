@@ -1,5 +1,3 @@
-// An Ollama that takes the request and never answers, as one did on
-// 2026-11-08 and held every ledger write with it.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
