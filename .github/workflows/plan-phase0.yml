@@ -1,0 +1,98 @@
+# Phase 0 of plan/installed-app-testing.md. Fork only: never send it upstream.
+name: Phase 0 spikes
+
+on:
+  push:
+    branches: [ci/installed-app-smoke]
+    paths:
+      - plan/spikes/**
+      - .github/workflows/plan-phase0.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase0-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spike:
+    name: ${{ matrix.target }} (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-latest
+            file: Oddboro-x64-setup.exe
+          - target: windows-arm64
+            runner: windows-11-arm
+            file: Oddboro-arm64-setup.exe
+          - target: linux-x86_64
+            runner: ubuntu-22.04
+            file: Oddboro-x86_64.AppImage
+            fuse: libfuse2
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+            file: Oddboro-x86_64.AppImage
+            fuse: libfuse2t64
+          - target: linux-aarch64
+            runner: ubuntu-22.04-arm
+            file: Oddboro-aarch64.AppImage
+            fuse: libfuse2
+          - target: mac
+            runner: macos-15
+            file: Oddboro.dmg
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      RELEASE: https://github.com/New-Altitude/Oddboro/releases/latest/download
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download the published release
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/release"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/release/${{ matrix.file }}" "$RELEASE/${{ matrix.file }}"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/release/latest.json" "$RELEASE/latest.json"
+          ls -l "$RUNNER_TEMP/release"
+
+      - name: Install Xvfb, a keyring, FUSE and WebDriver
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 gnome-keyring \
+            libsecret-tools ${{ matrix.fuse }} webkit2gtk-driver imagemagick xdotool
+          rustup toolchain install stable --profile minimal
+          cargo install tauri-driver --locked
+
+      - name: Run the spike
+        if: runner.os != 'Linux'
+        shell: bash
+        run: >
+          node plan/spikes/phase0.ts --artifact "$RUNNER_TEMP/release/${{ matrix.file }}"
+          --latest "$RUNNER_TEMP/release/latest.json" --out "$RUNNER_TEMP/out"
+
+      # The office keeps keys in a Secret Service keyring, so the run gets a
+      # session bus with an unlocked GNOME Keyring, and Xvfb as its display.
+      - name: Run the spike
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n phase0 | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            xvfb-run -a -s "-screen 0 1440x900x24" node plan/spikes/phase0.ts --webdriver \
+              --artifact "$RUNNER_TEMP/release/${{ matrix.file }}" \
+              --latest "$RUNNER_TEMP/release/latest.json" --out "$RUNNER_TEMP/out"'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: phase0-${{ matrix.target }}-${{ matrix.runner }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: warn

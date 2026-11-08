@@ -32,7 +32,7 @@ gate (`ci/release-artifact-gate`) cannot see.
 | Phase                                  | Status                                                                                                                             |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped |
-| 0. Prove the unknowns on real runners  | In progress. Windows x64 proven locally (below). The rest is open                                                                  |
+| 0. Prove the unknowns on real runners  | In progress. Windows x64 proven locally (below). Runner spike written (`spikes/phase0.ts`, `plan-phase0.yml`); results pending     |
 | 1a. Instrument the app                 | Not started                                                                                                                        |
 | 1. Gate the release on installed smoke | Not started                                                                                                                        |
 | 2. Checks on every pull request        | Not started                                                                                                                        |
@@ -340,9 +340,27 @@ the app runs with the DevTools port open.
 
 ## The spike scripts
 
-In [spikes/](spikes/). Windows only, against the installed app. Each starts
-Oddboro on its own port, database port and throwaway home, and quits it after.
-They still write a few lines to the real `office.log` (1a, item 3).
+In [spikes/](spikes/).
+
+**`phase0.ts`, the runner spike.** `.github/workflows/plan-phase0.yml` runs it
+on every push to this branch that touches `plan/spikes/` or the workflow, on
+six runners: Windows x64 and arm64, Ubuntu 22.04 and 24.04 (x86_64), Ubuntu
+22.04 arm64, and macOS 15. Each job downloads the published release (the
+site's file names under `releases/latest/download/`, and `latest.json` for the
+version), installs it, starts it in isolation, runs the checks, quits and
+relaunches it (20 times on Windows, 5 elsewhere), and on Linux probes
+WebDriver. It points `ODDBORO_UPDATE_URL` at an address that refuses at once,
+so it always runs the version it downloaded. It keeps going after a failure.
+Each job writes a summary table to the run page, one annotation with every
+result (readable through GitHub's public API without a login), and uploads
+`results.json`, screenshots, `office.log` and `shell.log`.
+
+Do not run it on a computer you use: on Windows it installs over, then
+uninstalls, the real Oddboro.
+
+**The first three, Windows only**, against the app already installed. Each
+starts Oddboro on its own port, database port and throwaway home, and quits it
+after. They still write a few lines to the real `office.log` (1a, item 3).
 
 ```sh
 node plan/spikes/installed.ts   # guard, #25 shapes, DevTools, in-page requests, screenshot
