@@ -317,8 +317,22 @@ async function devtoolsDiagnosis(): Promise<string> {
   return `port ${CDP} open: ${await tcp(CDP)}; /json/list: ${describe(list)}; WebView2 runtime: ${version}; profiles: ${profiles}; WebView2 listening on: ${listening}; Edge policies: ${policies}; browser process: ${browser}`;
 }
 
-const POLICY_KEY =
-  'HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments';
+/**
+ * Windows: the office page as UI Automation sees it, the way a screen reader
+ * does: the shell's windows, the page's document, its first texts and buttons.
+ */
+function automationView(pid: number): string {
+  return ps(
+    `Add-Type -AssemblyName UIAutomationClient; $A=[Windows.Automation.AutomationElement]; $r=$A::RootElement; ` +
+      `$wins=@($r.FindAll('Children',(New-Object Windows.Automation.PropertyCondition($A::ProcessIdProperty, ${pid})))); ` +
+      `$docType=New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, [Windows.Automation.ControlType]::Document); ` +
+      `$btnType=New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, [Windows.Automation.ControlType]::Button); ` +
+      `$doc=$null; foreach ($w in $wins) { $d=$w.FindFirst('Descendants',$docType); if ($d) { $doc=$d; break } }; ` +
+      `$texts=if ($doc) { @($doc.FindAll('Descendants',[Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 30) -join ' | ' } else { '' }; ` +
+      `$buttons=if ($doc) { @($doc.FindAll('Descendants',$btnType) | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -First 15) -join ' | ' } else { '' }; ` +
+      `'windows: ' + (@($wins | ForEach-Object { $_.Current.Name + ' [' + $_.Current.ClassName + ']' }) -join '; ') + ' || document: ' + $(if ($doc) { $doc.Current.Name } else { 'none' }) + ' || texts: ' + $texts + ' || buttons: ' + $buttons`
+  );
+}
 
 const SHELL_LOG = join(OUT, 'shell.log');
 let launches = 0;
@@ -545,6 +559,15 @@ log(
 let exe = '';
 let installDir = '';
 
+if (WIN)
+  await step("this script's integrity level (the app inherits it)", false, () =>
+    sh('whoami', ['/groups', '/fo', 'csv', '/nh'])
+      .out.split('\n')
+      .filter((l) => l.includes('Mandatory Label'))
+      .map((l) => l.split('","')[0].replace(/^"/, ''))
+      .join(', ')
+  );
+
 if (MAC)
   await step('Keychain state before the first start', false, () =>
     [
@@ -724,6 +747,13 @@ if (firstStart) {
       });
       page.close();
     }
+    await step('the page through UI Automation', false, async () => {
+      await sleep(2000);
+      // Chromium builds its accessibility tree once a client asks, so ask twice.
+      automationView(app.pid ?? 0);
+      await sleep(3000);
+      return automationView(app.pid ?? 0);
+    });
   }
   if (MAC) {
     await sleep(3000);
@@ -775,25 +805,37 @@ if (firstStart) {
   killAll();
 }
 
-// The second run found the WebView2 browser on the runners started without the
-// debugging flag from the environment. WebView2 also reads its arguments from
-// a registry key per program, so try that.
+// Run 4: on the runners WebView2 took WEBVIEW2_USER_DATA_FOLDER but dropped
+// the extra arguments, from the environment and from its registry key alike.
+// The runners run jobs elevated, a PC as a normal user, so try a Basic User
+// token. runas passes this script's environment on.
 if (WIN && installDir && firstStart && !results.some((r) => r.step.includes('DevTools') && r.ok))
-  await step('DevTools through the WebView2 registry key', false, async () => {
-    run('reg', [
-      'add',
-      POLICY_KEY,
-      '/v',
-      'oddboro.exe',
-      '/t',
-      'REG_SZ',
-      '/d',
-      `--remote-debugging-port=${CDP}`,
-      '/f'
-    ]);
-    const viaKey = launch(exe);
+  await step('DevTools from a non-admin token (runas /trustlevel)', false, async () => {
+    const before = new Set(shellPids());
+    const viaRunas = spawn('runas', ['/trustlevel:0x20000', exe], {
+      env: { ...process.env, ...appEnv() },
+      stdio: 'ignore'
+    });
     try {
-      await ready(viaKey);
+      await until(
+        'the office',
+        async () =>
+          (await fetch(`${BASE}/api/update`, { signal: AbortSignal.timeout(2000) }).then(
+            (r) => r.ok,
+            () => false
+          ))
+            ? true
+            : undefined,
+        120
+      ).catch(() => {
+        throw new Error(
+          `no answer within 120 s (runas exited ${viaRunas.exitCode}; new shells: ${
+            shellPids()
+              .filter((p) => !before.has(p))
+              .join(', ') || 'none'
+          }). Log: ${logTail(5)}`
+        );
+      });
       const page = await devtoolsPage().catch(async (e: unknown) => {
         throw new Error(`${e instanceof Error ? e.message : e}. ${await devtoolsDiagnosis()}`);
       });
@@ -811,8 +853,10 @@ if (WIN && installDir && firstStart && !results.some((r) => r.step.includes('Dev
       page.close();
       return `connected: title "${title}", in-page DELETE ${status}, page.png saved`;
     } finally {
-      await quit(viaKey).catch(() => killAll());
-      sh('reg', ['delete', POLICY_KEY, '/f']);
+      killAll();
+      await until('quit', async () => ((await allGone()) ? true : undefined), 20).catch(
+        () => undefined
+      );
     }
   });
 
@@ -845,11 +889,13 @@ if (MAC && installDir)
     );
     await sleep(2000);
     const shot = screenshot('symlinked-start.png');
+    // A dialog with no parent window goes through CFUserNotification, which
+    // macOS's UserNotificationCenter shows, not the app.
     const dialog = sh(
       'osascript',
       [
         '-e',
-        `tell application "System Events" to get value of every static text of every window of (first process whose unix id is ${linked.pid})`
+        'tell application "System Events" to get value of every static text of every window of process "UserNotificationCenter"'
       ],
       20_000
     ).out;
