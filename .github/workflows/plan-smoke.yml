@@ -66,6 +66,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -75,6 +77,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
 
       - name: Run the ledger, office and desktop tests
+        id: tests
         run: |
           status=0
           for ws in @oddboro/ledger @oddboro/office @oddboro/desktop; do
@@ -86,6 +89,20 @@ jobs:
             done
           done
           exit $status
+
+      # The office suite on the commit this work started from, so a failure
+      # that was already there reads as such.
+      - name: Run the office tests from before this work
+        if: failure() && steps.tests.outcome == 'failure'
+        run: |
+          git worktree add "$RUNNER_TEMP/base" 3be9027
+          cd "$RUNNER_TEMP/base"
+          npm ci --no-audit --no-fund
+          npm test -w @oddboro/office > "$RUNNER_TEMP/base.txt" 2>&1 || true
+          echo "::notice title=Office tests at 3be9027::$(grep -E '^ℹ (tests|pass|fail|skipped) ' "$RUNNER_TEMP/base.txt" | tr '\n' ' ')"
+          grep -E '^✖ ' "$RUNNER_TEMP/base.txt" | sort -u | head -20 | while read -r line; do
+            echo "::notice title=Failing at 3be9027 too::$line"
+          done
 
   app:
     name: app (${{ matrix.runner }})

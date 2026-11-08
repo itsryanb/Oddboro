@@ -48,6 +48,7 @@ import {
   pageHeaders,
   plist,
   PORT,
+  ps,
   quit,
   ready,
   run,
@@ -186,20 +187,28 @@ async function officeChecks(expect: { version?: string; claude: boolean }): Prom
 }
 
 /**
- * The real window: the welcome shows, and Next moves it on to the name step.
- * Before onboarding, on a fresh home. "Changed" alone would prove nothing: the
- * music player's clock ticks on the welcome too. Next stays disabled until
- * the welcome's system checks are in, so the press is tried until it lands.
+ * The real window: the welcome's Next moves it on to the name step. Before
+ * onboarding, on a fresh home. "Changed" alone would prove nothing: the music
+ * player's clock ticks on the welcome too. Next stays disabled until the
+ * welcome's system checks are in, so the press is tried until it lands. A
+ * press matches the button's whole name, never "Next track".
  */
 async function windowCheck(page: Page): Promise<string> {
+  let lastRead = '';
   const before = await until(
-    'the welcome in the window',
+    'a Next button in the window',
     async () => {
-      const text = await page.read();
-      return /welcome/i.test(text) && text.includes('Next') ? text : undefined;
+      lastRead = await page
+        .read()
+        .catch((e: unknown) => `read failed: ${e instanceof Error ? e.message : e}`);
+      return lastRead.includes('Next') ? lastRead : undefined;
     },
     60
-  );
+  ).catch((e: unknown) => {
+    throw new Error(
+      `${e instanceof Error ? e.message : e}. Last read: ${lastRead.slice(0, 600) || '(nothing)'}`
+    );
+  });
   let lastTry = '';
   const after = await until(
     'the name step after Next',
@@ -424,8 +433,11 @@ async function smokeApp(): Promise<void> {
         'Programs',
         'Oddboro.lnk'
       );
-      if (!existsSync(lnk)) throw new Error(`${lnk} is missing`);
-      return lnk;
+      if (existsSync(lnk)) return lnk;
+      const found = ps(
+        `@(@($env:APPDATA, $env:ProgramData, [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) | Where-Object { $_ } | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -Filter '*.lnk' -ErrorAction SilentlyContinue | Where-Object { $_.Name -like '*ddboro*' } } | ForEach-Object { $_.FullName }) -join ', '`
+      );
+      throw new Error(`${lnk} is missing. Oddboro shortcuts anywhere: ${found || 'none'}`);
     });
   }
   if (WIN)
