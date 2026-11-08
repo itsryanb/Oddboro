@@ -29,14 +29,14 @@ gate (`ci/release-artifact-gate`) cannot see.
 
 ## Tracker
 
-| Phase                                  | Status                                                                                                                                                                   |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped                                       |
-| 0. Prove the unknowns on real runners  | **Done** (run 9, 2026-11-08). Every required check passes on all six runners, and each system reads and presses its real window: UI Automation, WebDriver, Accessibility |
-| 1a. Instrument the app                 | Not started                                                                                                                                                              |
-| 1. Gate the release on installed smoke | Not started                                                                                                                                                              |
-| 2. Checks on every pull request        | Not started                                                                                                                                                              |
-| 3. Deeper journeys, fakes, MCP driver  | Not started                                                                                                                                                              |
+| Phase                                  | Status                                                                                                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prerequisite: tests run on Windows     | Done on this branch (3be9027, `windows-and-linux-test-fixes`). Ledger tests on Windows 11, 2026-11-07: 302 pass, 0 fail, 3 skipped                                                              |
+| 0. Prove the unknowns on real runners  | **Done** (run 9, 2026-11-08). Every required check passes on all six runners, and each system reads and presses its real window: UI Automation, WebDriver, Accessibility                        |
+| 1a. Instrument the app                 | Built (2026-11-08): timed log lines, dialog words and exit codes in the shell, `ODDBORO_LOG`, startup steps, `/api/health`, page reports. Rust proved in CI only (`plan-smoke.yml`)             |
+| 1. Gate the release on installed smoke | Built (2026-11-08): `driver.ts`, `smoke.ts`, the `smoke` job in `release.yml`. Proved locally on the stage and on the installed 0.0.8; unsigned builds on all three systems in `plan-smoke.yml` |
+| 2. Checks on every pull request        | Not started                                                                                                                                                                                     |
+| 3. Deeper journeys, fakes, MCP driver  | Not started                                                                                                                                                                                     |
 
 ## How the installed app runs
 
@@ -197,6 +197,15 @@ Findings for the app itself:
 3. **The setup checks are slow on Windows.** `GET /api/setup`, which the
    Setup window loads, took 9 s on x64 and 35 s on arm64, against under 1 s on
    Mac and on Ubuntu 24.04 and arm64 (10 s once on Ubuntu 22.04 x86_64).
+4. **A stuck Ollama held every ledger write** (found by `smoke.ts --stage`,
+   2026-11-08). `embed()` called Ollama with no timeout. On a PC whose Ollama
+   hung (a direct request waited 120 s), onboarding never answered, though its
+   writes went through; the installed 0.0.8 hangs the same way. Fixed in this
+   branch: 15 s, then the line goes in found by its words, and Ollama is left
+   alone for a minute.
+5. **The welcome's Next stays disabled until the system checks are in.** Not a
+   bug, but a test pressing it at once gets refused (`ElementNotEnabled`), so
+   the smoke test tries until the name step shows.
 
 ## Driving the real window
 

@@ -1,0 +1,173 @@
+# Phases 1a and 1 of plan/installed-app-testing.md, proved before a release
+# can run them: the shell's Rust checks on each system, then an unsigned build
+# of this branch on each, put through the release's smoke test. The fork has
+# no signing secrets, so this is as close to release.yml as it gets. Fork
+# only: never send it upstream.
+name: Plan smoke
+
+on:
+  push:
+    branches: [ci/installed-app-smoke]
+    paths:
+      - apps/**
+      - packages/**
+      - .github/workflows/plan-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: rust (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the libraries Tauri builds against
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev patchelf file build-essential
+
+      # Its problem matchers turn rustfmt's and clippy's findings into
+      # annotations, which the fork's public API serves without a login.
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+          rustflags: ''
+          cache-workspaces: apps/desktop/src-tauri -> target
+
+      - run: cargo fmt --check
+        if: runner.os == 'Linux'
+
+      - run: cargo clippy --all-targets -- -D warnings
+
+      - run: cargo test
+
+  # The suites on Linux, where all three are meant to pass (on Windows the
+  # office's run in WSL). Each failing test's name becomes an annotation.
+  tests:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Run the ledger, office and desktop tests
+        run: |
+          status=0
+          for ws in @oddboro/ledger @oddboro/office @oddboro/desktop; do
+            npm test -w "$ws" > "$RUNNER_TEMP/out.txt" 2>&1 || status=1
+            summary=$(grep -E '^ℹ (tests|pass|fail|skipped) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ')
+            echo "::notice title=Tests $ws::$summary"
+            grep -E '^✖ ' "$RUNNER_TEMP/out.txt" | sort -u | head -20 | while read -r line; do
+              echo "::error title=Test $ws::$line"
+            done
+          done
+          exit $status
+
+  app:
+    name: app (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            bundle: nsis
+            file: '*-setup.exe'
+          - runner: macos-15
+            bundle: dmg
+            file: '*.dmg'
+          - runner: ubuntu-22.04
+            bundle: appimage
+            file: '*.AppImage'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install the libraries Tauri builds against, and what the app runs with
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev patchelf file build-essential \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+            gstreamer1.0-pulseaudio gstreamer1.0-pipewire \
+            xvfb xauth dbus-x11 gnome-keyring libsecret-tools libfuse2 webkit2gtk-driver \
+            imagemagick xdotool
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rustflags: ''
+          cache-workspaces: apps/desktop/src-tauri -> target
+
+      - name: Install tauri-driver
+        if: runner.os == 'Linux'
+        run: cargo install tauri-driver --locked
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Stage the server
+        run: node apps/desktop/scripts/stage.ts
+
+      - name: Smoke test the stage
+        shell: bash
+        run: node apps/desktop/scripts/smoke.ts --stage --annotate --out "$RUNNER_TEMP/stage-smoke"
+
+      - name: Build the app, unsigned
+        run: npm run bundle -w @oddboro/desktop
+
+      - name: Smoke test the build
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          file=$(find apps/desktop/src-tauri/target/release/bundle/${{ matrix.bundle }} -name '${{ matrix.file }}' | head -1)
+          node apps/desktop/scripts/smoke.ts --artifact "$file" --version 0.0.1 --annotate \
+            --out "$RUNNER_TEMP/smoke"
+
+      - name: Smoke test the build
+        if: runner.os == 'Linux'
+        run: |
+          file=$(find apps/desktop/src-tauri/target/release/bundle/${{ matrix.bundle }} -name '${{ matrix.file }}' | head -1)
+          export file
+          dbus-run-session -- bash -c '
+            echo -n smoke | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            xvfb-run -a -s "-screen 0 1440x900x24" node apps/desktop/scripts/smoke.ts \
+              --artifact "$file" --version 0.0.1 --annotate --out "$RUNNER_TEMP/smoke"'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: plan-smoke-${{ matrix.runner }}
+          path: |
+            ${{ runner.temp }}/stage-smoke
+            ${{ runner.temp }}/smoke
+          if-no-files-found: warn
