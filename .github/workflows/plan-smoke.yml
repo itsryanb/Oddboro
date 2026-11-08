@@ -87,6 +87,11 @@ jobs:
             grep -E '^✖ ' "$RUNNER_TEMP/out.txt" | sort -u | head -20 | while read -r line; do
               echo "::error title=Test $ws::$line"
             done
+            if grep -q '^✖ failing tests:' "$RUNNER_TEMP/out.txt"; then
+              detail=$(sed -n '/^✖ failing tests:/,$p' "$RUNNER_TEMP/out.txt" | head -120 \
+                | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
+              echo "::notice title=Why $ws failed::$detail"
+            fi
           done
           exit $status
 
