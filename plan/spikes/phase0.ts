@@ -834,12 +834,17 @@ if (firstStart) {
   if (MAC) {
     await sleep(3000);
     await step('screenshot (screencapture)', false, () => screenshot('screen.png'));
-    await step('the page through Accessibility: read, press Next, read', false, async () => {
+    // Run 7: on the Mac the page had moved on to the office floor after
+    // onboarding, so there was no Next. Rename Kitchen opens a text field.
+    await step('the page through Accessibility: read, press a button, read', true, async () => {
       const before = macView(app.pid ?? 0);
-      const pressed = macPress(app.pid ?? 0, 'Next');
+      if (!before.includes('AXWebArea')) throw new Error(`no page: ${before}`);
+      let pressed = macPress(app.pid ?? 0, 'Next');
+      if (pressed.startsWith('no ')) pressed = macPress(app.pid ?? 0, 'Rename Kitchen');
       await sleep(3000);
       const after = macView(app.pid ?? 0);
-      return `${pressed}; the page ${after === before ? 'did not change' : 'changed'}. Before: ${before.slice(0, 500)} After: ${after.slice(0, 700)}`;
+      const roles = (view: string) => view.split(' || ')[0];
+      return `${pressed}. Roles before: ${roles(before)}. Roles after: ${roles(after)}. After: ${after.split(' || ')[1]?.slice(0, 500)}`;
     });
   }
   if (LINUX) {

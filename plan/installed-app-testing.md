@@ -149,12 +149,24 @@ What it answered:
   `codesign`, `spctl` ("accepted source=Notarized Developer ID") and
   `stapler` pass. `screencapture` works, and System Events can read the app's
   windows, so Accessibility is allowed on the runner.
-- **Linux WebDriver** attaches to the loading window (`tauri://localhost`)
-  and loses it when the office opens ("no such window"). The office window
-  then shows up as a new handle. Run 3 switches to it.
-- **Windows DevTools** works on a PC (WebView2 157.0.4341.42) but on neither
-  runner: the WebView2 browser starts without the debugging flag, even with a
-  profile of its own. Run 3 records why and tries WebView2's registry key.
+- **Linux WebDriver drives the real window** (runs 3 and 4). The session
+  starts on the loading window (`tauri://localhost`) and loses it when the
+  office opens ("no such window"). The office window then shows up as a new
+  handle: switched to it, the session is on `http://127.0.0.1:4590/`, and a
+  request from inside the page, shaped as `call()` sends it, reaches its
+  route (404). On all three Linux runners, with no change to the app.
+- **Windows DevTools works on a PC but not on the runners** (runs 2 to 5).
+  WebView2 156.0.4314.58 there takes `WEBVIEW2_USER_DATA_FOLDER` (the browser
+  process runs on the spike's profile) but drops the extra arguments, whether
+  they come from `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`, from WebView2's
+  registry key (`...\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments`)
+  or from a Basic User token (`runas /trustlevel`). No `DevToolsActivePort`
+  file, nothing listening. A PC with WebView2 157.0.4341.42 took it.
+- **Windows UI Automation drives the real window instead** (runs 5 and 6).
+  It reads the page's title ("Welcome · Oddboro"), its texts (the setup
+  checks, with the runner's real "Ollama: Not installed") and its buttons, and
+  pressing Next moves the welcome on to "What should your Odds call you?". On
+  both Windows runners and on a PC. Run 6 passed on all six runners.
 - **The relaunch stall** did not come back in 50 quick relaunches (40 on
   Windows). It is rare: 1a's dialog logging is the fix, not more retries.
 - **The harness:** a PowerShell call takes 10 to 40 s on the arm64 Windows
@@ -166,20 +178,25 @@ Findings for the app itself:
 1. **The Windows silent install opens Oddboro afterwards,** on the default
    port and home. Unexpected for anyone deploying with `/S`.
 2. **The Mac app does not start from a folder reached through a symlink.**
-   Copied under `/var/folders` (`/var` is a symlink), it logged "current_exe()
-   ... contains a symlink" (run 1) and did not answer within 30 s (run 2).
-   Run 3 reads what the dialog says.
+   Copied under `/var/folders` (`/var` is a symlink), the updater logs
+   "StartingBinary found current_exe() that contains a symlink on a
+   non-allowed platform", Node never starts, and the owner sees "Oddboro cannot
+   find the office server. Reinstall Oddboro." (run 5, read from
+   UserNotificationCenter). Reinstalling to the same place cannot help. The
+   shell finds its resources through Tauri's resource folder, which refuses a
+   path through a symlink: the dialog should say to move the app, or the shell
+   should resolve the path first.
 3. **The setup checks are slow on Windows.** `GET /api/setup`, which the
    Setup window loads, took 9 s on x64 and 35 s on arm64, against under 1 s on
    Mac and on Ubuntu 24.04 and arm64 (10 s once on Ubuntu 22.04 x86_64).
 
 ## Driving the real window
 
-| System  | Install                                                                                                            | Drive the real window                                                                                                                                                                                  | Watch out for                                                                                                               |
-| ------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
-| Windows | NSIS with `/S` (case matters). Check the uninstall entry's `DisplayVersion` and the Start menu shortcut            | DevTools over `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<p>`. Proven. Set `WEBVIEW2_USER_DATA_FOLDER` per instance for parallel runs                                              | Modal dialogs block. `windows-latest` is Windows Server, not 10 or 11                                                       |
-| Linux   | Run the AppImage under `xvfb-run` and `dbus-run-session`, with `libfuse2` and `gnome-keyring`                      | WebDriver through `WebKitWebDriver` (`webkit2gtk-driver`), or `tauri-driver`. Release builds allow it when `TAURI_WEBVIEW_AUTOMATION=true`, read at run time by `tauri-runtime-wry`, Linux only        | wry hands automation the first webview created, and Oddboro creates the loading window first. Ubuntu 24.04 lacks `libfuse2` |
-| Mac     | `hdiutil attach`, then `codesign --verify --deep --strict`, `spctl --assess -vv`, `xcrun stapler validate`, launch | None without a WebDriver server built into the app, which a shipped app must not carry. Use requests from outside the window, both header shapes (with and without `Sec-Fetch-Site`), and a screenshot | The Keychain read at first start may prompt on a runner. Screen capture permission on `macos-15` runners is unproven        |
+| System  | Install                                                                                                                                  | Drive the real window                                                                                                                                                                                                                       | Watch out for                                                                                                                               |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows | NSIS with `/S` (case matters), then close the Oddboro it opens. Check the uninstall entry's `DisplayVersion` and the Start menu shortcut | **UI Automation**: read the page's document, texts and buttons, press buttons through `InvokePattern`. Proven on both runners. DevTools (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`) works on a PC only                                        | Modal dialogs block: read them with UI Automation (`#32770`). `windows-latest` is Windows Server, not 10 or 11. PowerShell is slow on arm64 |
+| Linux   | Run the AppImage under `xvfb-run` and `dbus-run-session`, with `libfuse2` (`libfuse2t64` on 24.04) and `gnome-keyring`                   | **WebDriver** through `tauri-driver` and `WebKitWebDriver` (`webkit2gtk-driver`); release builds allow it when `TAURI_WEBVIEW_AUTOMATION=true`. Switch to the new window handle once the loading window closes. Proven on all three runners | wry hands automation the first webview created, which is the loading window                                                                 |
+| Mac     | `hdiutil attach`, then `codesign --verify --deep --strict`, `spctl --assess -vv`, `xcrun stapler validate`, launch                       | None without a WebDriver server built into the app, which a shipped app must not carry. Use requests from outside the window, both header shapes (with and without `Sec-Fetch-Site`), and a screenshot                                      | The Keychain read at first start may prompt on a runner. Screen capture permission on `macos-15` runners is unproven                        |
 
 Other Mac routes, for later if a Mac-only window bug shows up: a separate
 test build (never shipped) with `tauri-plugin-wdio-webdriver` for
