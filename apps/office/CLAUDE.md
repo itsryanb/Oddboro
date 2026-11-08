@@ -9,6 +9,10 @@ in `vite.config.ts`), so each package finds its own files beside its code and
 the app ships them whole (`apps/desktop/scripts/stage.ts`). In the app
 (`ODDBORO_APP=1`) `hooks.server.ts` quits on SIGTERM and when stdin closes.
 
+`npm test -w @oddboro/office` builds the sprites first (`pretest`, about 5
+seconds): the office reads their `dist/meta.json`, which a clean checkout
+lacks.
+
 What the office says about itself, for the app's log and its smoke test
 (`apps/desktop/CLAUDE.md`, "Smoke tests"). `init` writes an `office:` line
 with the version and system, one per startup step with its time (secrets,
