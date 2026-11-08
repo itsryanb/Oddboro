@@ -66,7 +66,7 @@ const results: Result[] = [];
 function describe(value: unknown): string {
   if (value === undefined) return '';
   const text = typeof value === 'string' ? value : JSON.stringify(value);
-  return text.replace(/\s+/g, ' ').slice(0, 400);
+  return text.replace(/\s+/g, ' ').slice(0, 2000);
 }
 
 async function step<T>(
@@ -300,7 +300,21 @@ async function devtoolsDiagnosis(): Promise<string> {
   const policies = tryPs(
     `@('HKLM:\\SOFTWARE\\Policies\\Microsoft\\Edge','HKCU:\\SOFTWARE\\Policies\\Microsoft\\Edge' | Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Recurse | ForEach-Object { $_.Name + ' = ' + (($_.Property | Select-Object -First 8) -join ',') } }) -join ' ;; '`
   );
-  return `port ${CDP} open: ${await tcp(CDP)}; /json/list: ${describe(list)}; WebView2 runtime: ${version}; Edge policies: ${policies}; browser process: ${browser.slice(0, 900)}`;
+  // Chromium writes DevToolsActivePort into the profile once its port is open.
+  // Where the profile went shows whether WEBVIEW2_USER_DATA_FOLDER was taken.
+  const profiles = [
+    join(WEBVIEW_PROFILE, 'EBWebView'),
+    join(process.env.LOCALAPPDATA ?? '', 'com.newaltitude.oddboro', 'EBWebView')
+  ]
+    .map((dir) => {
+      const port = join(dir, 'DevToolsActivePort');
+      return `${dir}: ${existsSync(dir) ? 'exists' : 'missing'}, DevToolsActivePort ${existsSync(port) ? readFileSync(port, 'utf8').replace(/\s+/g, ' ') : 'missing'}`;
+    })
+    .join('; ');
+  const listening = tryPs(
+    `@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).Name -eq 'msedgewebview2' } | ForEach-Object { "$($_.LocalAddress):$($_.LocalPort)" }) -join ', '`
+  );
+  return `port ${CDP} open: ${await tcp(CDP)}; /json/list: ${describe(list)}; WebView2 runtime: ${version}; profiles: ${profiles}; WebView2 listening on: ${listening}; Edge policies: ${policies}; browser process: ${browser}`;
 }
 
 const POLICY_KEY =
@@ -882,6 +896,11 @@ function finish(): never {
         `${r.ok ? 'ok' : r.required ? 'FAIL' : 'no'} | ${r.step} | ${r.ms} ms | ${r.detail.slice(0, 300)}`
     );
     console.log(`::notice title=Phase 0 results::${escape([env, ...lines].join('\n'))}`);
+    // GitHub keeps at most 10 notices per step: the results, then up to 9
+    // details too long for the table, in full.
+    const title = (t: string) => escape(t).replace(/:/g, '%3A').replace(/,/g, '%2C');
+    for (const r of results.filter((r) => r.detail.length > 300).slice(0, 9))
+      console.log(`::notice title=${title(`Detail - ${r.step}`)}::${escape(r.detail)}`);
   }
   log(failed.length ? `${failed.length} required step(s) failed` : 'every required step passed');
   process.exit(failed.length ? 1 : 0);

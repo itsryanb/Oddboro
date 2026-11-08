@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: >
           node plan/spikes/phase0.ts --artifact "$RUNNER_TEMP/release/${{ matrix.file }}"
-          --latest "$RUNNER_TEMP/release/latest.json" --out "$RUNNER_TEMP/out"
+          --latest "$RUNNER_TEMP/release/latest.json" --out "$RUNNER_TEMP/out" --relaunches 3
 
       # The office keeps keys in a Secret Service keyring, so the run gets a
       # session bus with an unlocked GNOME Keyring, and Xvfb as its display.
@@ -88,7 +88,7 @@ jobs:
             echo -n phase0 | gnome-keyring-daemon --unlock --components=secrets > /dev/null
             xvfb-run -a -s "-screen 0 1440x900x24" node plan/spikes/phase0.ts --webdriver \
               --artifact "$RUNNER_TEMP/release/${{ matrix.file }}" \
-              --latest "$RUNNER_TEMP/release/latest.json" --out "$RUNNER_TEMP/out"'
+              --latest "$RUNNER_TEMP/release/latest.json" --out "$RUNNER_TEMP/out" --relaunches 3'
 
       - uses: actions/upload-artifact@v4
         if: always()
