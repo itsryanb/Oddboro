@@ -346,68 +346,66 @@ function automationPress(pid: number, name: string): string {
 }
 
 /** Mac: the office window's texts and buttons, through System Events (Accessibility). */
+// The text delimiters are set outside the tell block: inside it, they go to
+// the app, which refuses them (run 6).
 function macView(pid: number): string {
   return sh(
     'osascript',
     [
       '-e',
-      `tell application "System Events" to tell (first process whose unix id is ${pid})`,
-      '-e',
-      'set out to {}',
-      '-e',
-      'repeat with e in (entire contents of window 1)',
-      '-e',
-      'try',
-      '-e',
-      'set r to role of e',
-      '-e',
-      'if r is "AXStaticText" then set end of out to (value of e as text)',
-      '-e',
-      'if r is "AXButton" then set end of out to ("[" & (name of e as text) & "/" & (description of e as text) & "]")',
-      '-e',
-      'if r is "AXWebArea" then set end of out to ("{web area: " & (name of e as text) & "}")',
-      '-e',
-      'end try',
-      '-e',
-      'end repeat',
-      '-e',
-      'set text item delimiters to " | "',
-      '-e',
-      'return out as text',
-      '-e',
-      'end tell'
+      `set out to {}
+set roles to {}
+tell application "System Events" to tell (first process whose unix id is ${pid})
+  set els to entire contents of window 1
+  set n to count of els
+  repeat with e in els
+    try
+      set r to role of e
+      if roles does not contain r then set end of roles to r
+      if r is "AXStaticText" then set end of out to (value of e as text)
+      if r is "AXButton" then set end of out to ("[" & (name of e as text) & "/" & (description of e as text) & "]")
+      if r is "AXWebArea" then set end of out to ("{web area: " & (name of e as text) & "}")
+    end try
+  end repeat
+end tell
+set AppleScript's text item delimiters to ", "
+set roleText to roles as text
+set AppleScript's text item delimiters to " | "
+return (n as text) & " elements; roles: " & roleText & " || " & (out as text)`
     ],
     90_000
   ).out;
 }
 
-/** Mac: presses a button in the office window by its name or description. */
+/** Mac: presses a button in the office window by its name, description or title. */
 function macPress(pid: number, name: string): string {
   return sh(
     'osascript',
     [
       '-e',
-      `tell application "System Events" to tell (first process whose unix id is ${pid})`,
-      '-e',
-      'repeat with e in (entire contents of window 1)',
-      '-e',
-      'try',
-      '-e',
-      `if role of e is "AXButton" and (name of e is "${name}" or description of e is "${name}") then`,
-      '-e',
-      'perform action "AXPress" of e',
-      '-e',
-      `return "pressed ${name}"`,
-      '-e',
-      'end if',
-      '-e',
-      'end try',
-      '-e',
-      'end repeat',
-      '-e',
-      `return "no ${name} button"`,
-      '-e',
-      'end tell'
+      `tell application "System Events" to tell (first process whose unix id is ${pid})
+  repeat with e in (entire contents of window 1)
+    try
+      if role of e is "AXButton" then
+        set {n1, d1, t1} to {"", "", ""}
+        try
+          set n1 to name of e as text
+        end try
+        try
+          set d1 to description of e as text
+        end try
+        try
+          set t1 to value of attribute "AXTitle" of e as text
+        end try
+        if n1 is "${name}" or d1 is "${name}" or t1 is "${name}" then
+          perform action "AXPress" of e
+          return "pressed ${name} (" & n1 & "/" & d1 & "/" & t1 & ")"
+        end if
+      end if
+    end try
+  end repeat
+end tell
+return "no ${name} button"`
     ],
     90_000
   ).out;
