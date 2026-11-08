@@ -334,6 +334,85 @@ function automationView(pid: number): string {
   );
 }
 
+/** Windows: presses a button in the office page by its name, as a screen reader would. */
+function automationPress(pid: number, name: string): string {
+  return ps(
+    `Add-Type -AssemblyName UIAutomationClient; $A=[Windows.Automation.AutomationElement]; $r=$A::RootElement; ` +
+      `$wins=@($r.FindAll('Children',(New-Object Windows.Automation.PropertyCondition($A::ProcessIdProperty, ${pid})))); ` +
+      `$c=New-Object Windows.Automation.AndCondition((New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, [Windows.Automation.ControlType]::Button)), (New-Object Windows.Automation.PropertyCondition($A::NameProperty, '${name}'))); ` +
+      `$b=$null; foreach ($w in $wins) { $b=$w.FindFirst('Descendants',$c); if ($b) { break } }; ` +
+      `if (-not $b) { 'no ${name} button' } else { $b.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke(); 'pressed ${name}' }`
+  );
+}
+
+/** Mac: the office window's texts and buttons, through System Events (Accessibility). */
+function macView(pid: number): string {
+  return sh(
+    'osascript',
+    [
+      '-e',
+      `tell application "System Events" to tell (first process whose unix id is ${pid})`,
+      '-e',
+      'set out to {}',
+      '-e',
+      'repeat with e in (entire contents of window 1)',
+      '-e',
+      'try',
+      '-e',
+      'set r to role of e',
+      '-e',
+      'if r is "AXStaticText" then set end of out to (value of e as text)',
+      '-e',
+      'if r is "AXButton" then set end of out to ("[" & (name of e as text) & "/" & (description of e as text) & "]")',
+      '-e',
+      'if r is "AXWebArea" then set end of out to ("{web area: " & (name of e as text) & "}")',
+      '-e',
+      'end try',
+      '-e',
+      'end repeat',
+      '-e',
+      'set text item delimiters to " | "',
+      '-e',
+      'return out as text',
+      '-e',
+      'end tell'
+    ],
+    90_000
+  ).out;
+}
+
+/** Mac: presses a button in the office window by its name or description. */
+function macPress(pid: number, name: string): string {
+  return sh(
+    'osascript',
+    [
+      '-e',
+      `tell application "System Events" to tell (first process whose unix id is ${pid})`,
+      '-e',
+      'repeat with e in (entire contents of window 1)',
+      '-e',
+      'try',
+      '-e',
+      `if role of e is "AXButton" and (name of e is "${name}" or description of e is "${name}") then`,
+      '-e',
+      'perform action "AXPress" of e',
+      '-e',
+      `return "pressed ${name}"`,
+      '-e',
+      'end if',
+      '-e',
+      'end try',
+      '-e',
+      'end repeat',
+      '-e',
+      `return "no ${name} button"`,
+      '-e',
+      'end tell'
+    ],
+    90_000
+  ).out;
+}
+
 const SHELL_LOG = join(OUT, 'shell.log');
 let launches = 0;
 
@@ -559,15 +638,6 @@ log(
 let exe = '';
 let installDir = '';
 
-if (WIN)
-  await step("this script's integrity level (the app inherits it)", false, () =>
-    sh('whoami', ['/groups', '/fo', 'csv', '/nh'])
-      .out.split('\n')
-      .filter((l) => l.includes('Mandatory Label'))
-      .map((l) => l.split('","')[0].replace(/^"/, ''))
-      .join(', ')
-  );
-
 if (MAC)
   await step('Keychain state before the first start', false, () =>
     [
@@ -720,7 +790,10 @@ if (firstStart) {
 
   if (WIN) {
     let page: Page | undefined;
-    await step('the real page renders (DevTools)', true, async () => {
+    // Informational since run 5: WebView2 156 on the runners drops the
+    // debugging argument whichever way it comes. UI Automation drives the
+    // window there instead. DevTools still works on a PC.
+    await step('the real page renders (DevTools)', false, async () => {
       page = await devtoolsPage().catch(async (e: unknown) => {
         throw new Error(`${e instanceof Error ? e.message : e}. ${await devtoolsDiagnosis()}`);
       });
@@ -747,27 +820,29 @@ if (firstStart) {
       });
       page.close();
     }
-    await step('the page through UI Automation', false, async () => {
+    await step('the page through UI Automation: read, press Next, read', true, async () => {
       await sleep(2000);
       // Chromium builds its accessibility tree once a client asks, so ask twice.
       automationView(app.pid ?? 0);
       await sleep(3000);
-      return automationView(app.pid ?? 0);
+      const before = automationView(app.pid ?? 0);
+      if (!before.includes('document: Welcome')) throw new Error(`no office page: ${before}`);
+      const pressed = automationPress(app.pid ?? 0, 'Next');
+      await sleep(3000);
+      const after = automationView(app.pid ?? 0);
+      return `${pressed}; the page ${after === before ? 'did not change' : 'changed'}. Before: ${before.split('|| texts: ')[1]?.slice(0, 300)} After: ${after.split('|| texts: ')[1]?.slice(0, 600)}`;
     });
   }
   if (MAC) {
     await sleep(3000);
     await step('screenshot (screencapture)', false, () => screenshot('screen.png'));
-    await step('window list (System Events, needs Accessibility)', false, () =>
-      run(
-        'osascript',
-        [
-          '-e',
-          `tell application "System Events" to get name of every window of (first process whose unix id is ${app.pid})`
-        ],
-        20_000
-      )
-    );
+    await step('the page through Accessibility: read, press Next, read', false, async () => {
+      const before = macView(app.pid ?? 0);
+      const pressed = macPress(app.pid ?? 0, 'Next');
+      await sleep(3000);
+      const after = macView(app.pid ?? 0);
+      return `${pressed}; the page ${after === before ? 'did not change' : 'changed'}. Before: ${before.slice(0, 500)} After: ${after.slice(0, 700)}`;
+    });
   }
   if (LINUX) {
     await sleep(3000);
@@ -804,61 +879,6 @@ if (firstStart) {
     await step('screenshot of the failed start', false, () => screenshot('failed-start.png'));
   killAll();
 }
-
-// Run 4: on the runners WebView2 took WEBVIEW2_USER_DATA_FOLDER but dropped
-// the extra arguments, from the environment and from its registry key alike.
-// The runners run jobs elevated, a PC as a normal user, so try a Basic User
-// token. runas passes this script's environment on.
-if (WIN && installDir && firstStart && !results.some((r) => r.step.includes('DevTools') && r.ok))
-  await step('DevTools from a non-admin token (runas /trustlevel)', false, async () => {
-    const before = new Set(shellPids());
-    const viaRunas = spawn('runas', ['/trustlevel:0x20000', exe], {
-      env: { ...process.env, ...appEnv() },
-      stdio: 'ignore'
-    });
-    try {
-      await until(
-        'the office',
-        async () =>
-          (await fetch(`${BASE}/api/update`, { signal: AbortSignal.timeout(2000) }).then(
-            (r) => r.ok,
-            () => false
-          ))
-            ? true
-            : undefined,
-        120
-      ).catch(() => {
-        throw new Error(
-          `no answer within 120 s (runas exited ${viaRunas.exitCode}; new shells: ${
-            shellPids()
-              .filter((p) => !before.has(p))
-              .join(', ') || 'none'
-          }). Log: ${logTail(5)}`
-        );
-      });
-      const page = await devtoolsPage().catch(async (e: unknown) => {
-        throw new Error(`${e instanceof Error ? e.message : e}. ${await devtoolsDiagnosis()}`);
-      });
-      await until(
-        'page text',
-        async () =>
-          String(await page.evaluate('document.body?.innerText ?? ""')).trim() ? true : undefined,
-        60
-      );
-      const title = await page.evaluate('document.title');
-      const status = await page.evaluate(
-        "fetch('/api/pokes/999999', { method: 'DELETE', headers: { 'content-type': 'application/json' } }).then((r) => r.status)"
-      );
-      writeFileSync(join(OUT, 'page.png'), await page.screenshot());
-      page.close();
-      return `connected: title "${title}", in-page DELETE ${status}, page.png saved`;
-    } finally {
-      killAll();
-      await until('quit', async () => ((await allGone()) ? true : undefined), 20).catch(
-        () => undefined
-      );
-    }
-  });
 
 if (WIN && installDir)
   await step('uninstalls silently', false, async () => {
