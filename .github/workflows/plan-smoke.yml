@@ -175,22 +175,26 @@ jobs:
 
       # Newer than any published version, as a release candidate is: the
       # committed 0.0.1 updates itself to the published one as it opens.
-      # Up to four tries a minute apart. A failed download can leave GitHub's
-      # error page where a tool should be, and Tauri would run it again, so
-      # its tools go between tries.
+      # GitHub's release downloads for Tauri's tools answered 504 about two
+      # times in three for an hour, one file at a time. So up to ten tries,
+      # keeping what arrived; only the error pages a failed download can
+      # leave where a tool should be (under 1 KB; the smallest tool is 31 KB)
+      # go between tries.
       - name: Build the app, unsigned
         shell: bash
         run: |
           echo '{ "version": "9.9.9" }' > apps/desktop/src-tauri/plan-version.conf.json
           set -o pipefail
-          for try in 1 2 3 4; do
+          for try in 1 2 3 4 5 6 7 8 9 10; do
             if npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json 2>&1 \
               | tee "$RUNNER_TEMP/build.log"; then
               exit 0
             fi
-            echo "::warning title=Build try $try failed::$(tail -3 "$RUNNER_TEMP/build.log" | tr '\n' ' ')"
-            rm -rf ~/.cache/tauri "${LOCALAPPDATA:-/nonexistent}/tauri"
-            [ "$try" -lt 4 ] && sleep 60
+            echo "::warning title=Build try $try failed::$(grep -E 'Downloading|failed to bundle' "$RUNNER_TEMP/build.log" | tail -2 | tr '\n' ' ')"
+            for dir in ~/.cache/tauri "${LOCALAPPDATA:-/nonexistent}/tauri"; do
+              [ -d "$dir" ] && find "$dir" -type f -size -1k -delete
+            done
+            [ "$try" -lt 10 ] && sleep 45
           done
           echo "::error title=The build failed::$(tail -40 "$RUNNER_TEMP/build.log" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
           exit 1
