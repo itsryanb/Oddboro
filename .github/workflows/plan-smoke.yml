@@ -174,21 +174,26 @@ jobs:
           key: tauri-tools-${{ runner.os }}-2.12.4
 
       # Newer than any published version, as a release candidate is: the
-      # committed 0.0.1 updates itself to the published one as it opens. A
-      # failed build gets one more try; the compiled code is cached by then.
+      # committed 0.0.1 updates itself to the published one as it opens.
+      # Up to four tries a minute apart. A failed download can leave GitHub's
+      # error page where a tool should be, and Tauri would run it again, so
+      # its tools go between tries.
       - name: Build the app, unsigned
         shell: bash
         run: |
           echo '{ "version": "9.9.9" }' > apps/desktop/src-tauri/plan-version.conf.json
           set -o pipefail
-          build() {
-            npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json 2>&1 \
-              | tee "$RUNNER_TEMP/build.log"
-          }
-          build || { echo "::warning title=The build failed once::trying again"; build; } || {
-            echo "::error title=The build failed::$(tail -40 "$RUNNER_TEMP/build.log" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
-            exit 1
-          }
+          for try in 1 2 3 4; do
+            if npm run bundle -w @oddboro/desktop -- --config src-tauri/plan-version.conf.json 2>&1 \
+              | tee "$RUNNER_TEMP/build.log"; then
+              exit 0
+            fi
+            echo "::warning title=Build try $try failed::$(tail -3 "$RUNNER_TEMP/build.log" | tr '\n' ' ')"
+            rm -rf ~/.cache/tauri "${LOCALAPPDATA:-/nonexistent}/tauri"
+            [ "$try" -lt 4 ] && sleep 60
+          done
+          echo "::error title=The build failed::$(tail -40 "$RUNNER_TEMP/build.log" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
+          exit 1
 
       - name: Smoke test the build
         if: runner.os != 'Linux'
