@@ -10,7 +10,12 @@ name: Plan release smoke
 on:
   push:
     branches: [ci/installed-app-smoke]
-    paths: [.github/workflows/plan-release-smoke.yml]
+    paths:
+      [
+        .github/workflows/plan-release-smoke.yml,
+        apps/desktop/scripts/smoke.ts,
+        apps/desktop/scripts/driver.ts
+      ]
   workflow_dispatch:
 
 permissions:
@@ -22,13 +27,16 @@ concurrency:
 
 jobs:
   smoke:
-    name: smoke (${{ matrix.build }}, ${{ matrix.runner }}${{ matrix.stale && ', stale' || '' }})
+    name: smoke (${{ matrix.build }}, ${{ matrix.runner }}${{ matrix.stale && ', stale' || '' }}${{ matrix.again && format(', run {0}', matrix.again) || '' }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - { build: mac, runner: macos-15, file: aarch64.dmg }
           - { build: linux-x86_64, runner: ubuntu-22.04, file: x86_64.AppImage }
+          # Twice more where the shell once outlived the clean-up after WebDriver.
+          - { build: linux-x86_64, runner: ubuntu-22.04, file: x86_64.AppImage, again: 2 }
+          - { build: linux-x86_64, runner: ubuntu-22.04, file: x86_64.AppImage, again: 3 }
           - { build: linux-x86_64, runner: ubuntu-24.04, file: x86_64.AppImage }
           - { build: linux-aarch64, runner: ubuntu-22.04-arm, file: aarch64.AppImage }
           - { build: windows-x64, runner: windows-latest, file: x64-setup.exe }
@@ -108,6 +116,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: smoke-${{ matrix.build }}-${{ matrix.runner }}${{ matrix.stale && '-stale' || '' }}
+          name: smoke-${{ matrix.build }}-${{ matrix.runner }}${{ matrix.stale && '-stale' || '' }}${{ matrix.again && format('-{0}', matrix.again) || '' }}
           path: ${{ runner.temp }}/smoke
           if-no-files-found: warn
