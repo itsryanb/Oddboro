@@ -1,0 +1,113 @@
+# Phase 1's last proof (plan/installed-app-testing.md): release.yml's smoke
+# job, step for step, against the published 0.0.8 on every runner a release
+# uses. Then a build broken on purpose: 0.0.8's files named as 0.0.9, as
+# 0.0.6's installer held 0.0.5 (#40). That run must fail on its version rows
+# and nothing else. Two differences from release.yml: the builds come from the
+# 0.0.8 release, not this run's build jobs, and --annotate, so the results
+# read without a login. Fork only: never send it upstream.
+name: Plan release smoke
+
+on:
+  push:
+    branches: [ci/installed-app-smoke]
+    paths: [.github/workflows/plan-release-smoke.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plan-release-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: smoke (${{ matrix.build }}, ${{ matrix.runner }}${{ matrix.stale && ', stale' || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { build: mac, runner: macos-15, file: aarch64.dmg }
+          - { build: linux-x86_64, runner: ubuntu-22.04, file: x86_64.AppImage }
+          - { build: linux-x86_64, runner: ubuntu-24.04, file: x86_64.AppImage }
+          - { build: linux-aarch64, runner: ubuntu-22.04-arm, file: aarch64.AppImage }
+          - { build: windows-x64, runner: windows-latest, file: x64-setup.exe }
+          - { build: windows-arm64, runner: windows-11-arm, file: arm64-setup.exe }
+          - { build: windows-x64, runner: windows-latest, file: x64-setup.exe, stale: true }
+          - { build: mac, runner: macos-15, file: aarch64.dmg, stale: true }
+          - { build: linux-x86_64, runner: ubuntu-22.04, file: x86_64.AppImage, stale: true }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ matrix.stale && '0.0.9' || '0.0.8' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Download the published build
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/built"
+          curl -fsSL --retry 10 --retry-all-errors --retry-delay 30 \
+            -o "$RUNNER_TEMP/built/Oddboro_${VERSION}_${{ matrix.file }}" \
+            "https://github.com/New-Altitude/Oddboro/releases/download/v0.0.8/Oddboro_0.0.8_${{ matrix.file }}"
+          ls -l "$RUNNER_TEMP/built"
+
+      - name: Install what Linux needs to run the app
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          fuse=libfuse2; if [ "$(lsb_release -rs)" = "24.04" ]; then fuse=libfuse2t64; fi
+          sudo apt-get install -y --no-install-recommends xvfb xauth dbus-x11 gnome-keyring \
+            libsecret-tools "$fuse" webkit2gtk-driver imagemagick xdotool
+          rustup toolchain install stable --profile minimal
+          cargo install tauri-driver --locked
+
+      - name: Smoke test the build
+        id: smoke
+        if: runner.os != 'Linux'
+        continue-on-error: ${{ matrix.stale == true }}
+        shell: bash
+        run: >
+          node apps/desktop/scripts/smoke.ts --from "$RUNNER_TEMP/built" --version "$VERSION"
+          --signed --annotate --out "$RUNNER_TEMP/smoke"
+
+      - name: Smoke test the build
+        id: smoke_linux
+        if: runner.os == 'Linux'
+        continue-on-error: ${{ matrix.stale == true }}
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n smoke | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            xvfb-run -a -s "-screen 0 1440x900x24" node apps/desktop/scripts/smoke.ts \
+              --from "$RUNNER_TEMP/built" --version "$VERSION" --annotate --out "$RUNNER_TEMP/smoke"'
+
+      - name: The stale build failed on its version rows, and only those
+        if: matrix.stale
+        shell: bash
+        env:
+          OUTCOME: ${{ runner.os == 'Linux' && steps.smoke_linux.outcome || steps.smoke.outcome }}
+        run: |
+          node -e '
+            const [file, os, outcome] = process.argv.slice(1);
+            const { results } = JSON.parse(require("fs").readFileSync(file, "utf8"));
+            const failed = [...new Set(results.filter((r) => r.required && !r.ok).map((r) => r.step))].sort();
+            const expected = {
+              Windows: ["oddboro.exe carries the version", "says the version it is", "the uninstall entry names the version"],
+              macOS: ["Info.plist names the version", "says the version it is"],
+              Linux: ["says the version it is"]
+            }[os];
+            const as = JSON.stringify(failed) === JSON.stringify(expected) && outcome === "failure";
+            console.log(`${as ? "::notice" : "::error"} title=Broken on purpose (#40)::the run ${outcome}; failed rows: ${failed.join("; ") || "none"}; expected: ${expected.join("; ")}`);
+            process.exit(as ? 0 : 1);
+          ' "$RUNNER_TEMP/smoke/results.json" "$RUNNER_OS" "$OUTCOME"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.build }}-${{ matrix.runner }}${{ matrix.stale && '-stale' || '' }}
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: warn
