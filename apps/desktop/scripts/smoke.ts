@@ -308,7 +308,10 @@ async function smokeStage(): Promise<void> {
           // As in the app: the server quits when asked, and a versioned first
           // start in an empty home makes its folder and records the version.
           ODDBORO_APP: '1',
-          ODDBORO_VERSION: '0.0.0-smoke'
+          ODDBORO_VERSION: '0.0.0-smoke',
+          // So Sentry starts in the staged server. The home is new, so the owner
+          // has not said yes and nothing is sent; port 9 would take nothing anyway.
+          ODDBORO_DIAGNOSTICS_DSN: 'http://oddboro@127.0.0.1:9/oddboro/0'
         },
         // A held stdin, as the app gives it: the server quits when it closes.
         stdio: ['pipe', 'pipe', 'pipe']
@@ -483,7 +486,7 @@ async function smokeApp(): Promise<void> {
   // starts the app itself, Windows and the Mac by reading the window as is.
   let app: ChildProcess | undefined;
   let page: Page | undefined;
-  let stopDriven: (() => Promise<void>) | undefined;
+  let stopDriven: (() => Promise<string>) | undefined;
   let script: ((body: string) => Promise<unknown>) | undefined;
   const started = await step('the first start answers', true, async () => {
     if (LINUX) {
@@ -539,10 +542,7 @@ async function smokeApp(): Promise<void> {
   });
   await step('a screenshot', false, () => screenshot(join(OUT, 'screen.png')));
   await step('quits with Node and both ports gone', true, async () => {
-    if (stopDriven) {
-      await stopDriven();
-      return 'stopped through tauri-driver; the relaunches quit with SIGTERM';
-    }
+    if (stopDriven) return `${await stopDriven()}; the relaunches quit with SIGTERM`;
     return `${await quit(app!, r)} ms`;
   });
 
