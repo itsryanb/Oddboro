@@ -33,7 +33,7 @@ jobs:
 
       - name: Lint
         if: matrix.case == 'as-is'
-        run: npm run lint
+        run: npx turbo run lint --filter=@oddboro/office
 
       - name: Break it as the issue did
         if: matrix.case == 'poke-writes'
