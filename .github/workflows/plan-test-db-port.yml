@@ -43,15 +43,20 @@ jobs:
           git checkout FETCH_HEAD -- packages/ledger/test/tool-server.ts
           grep -c "listen(0" packages/ledger/test/tool-server.ts
 
-      - name: Forty copies of goal-day-tool.test.ts at once
+      # Forty at once ran the Ubuntu runner out of memory: each file holds a
+      # database of its own.
+      - name: Twelve copies of goal-day-tool.test.ts at once, five rounds
         working-directory: packages/ledger
         run: |
-          for n in $(seq 40); do cp test/goal-day-tool.test.ts "test/zz-race-$n.test.ts"; done
-          status=0
-          node --test --test-concurrency=40 --test-timeout=60000 --experimental-test-module-mocks \
-            test/zz-race-*.test.ts > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
+          for n in $(seq 12); do cp test/goal-day-tool.test.ts "test/zz-race-$n.test.ts"; done
+          : > "$RUNNER_TEMP/out.txt"
+          for round in 1 2 3 4 5; do
+            node --test --test-concurrency=12 --test-timeout=60000 --experimental-test-module-mocks \
+              test/zz-race-*.test.ts >> "$RUNNER_TEMP/out.txt" 2>&1 || true
+          done
           inuse=$(grep -c "EADDRINUSE" "$RUNNER_TEMP/out.txt" || true)
-          echo "::notice title=${{ matrix.helper }}::$(grep -E '^ℹ (tests|pass|fail) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ') EADDRINUSE lines: $inuse"
+          files=$(grep -cE '^✖ test/zz-race' "$RUNNER_TEMP/out.txt" || true)
+          echo "::notice title=${{ matrix.helper }}::of 60 file runs, $files failed; EADDRINUSE lines: $inuse"
           [ "$inuse" -gt 0 ] && echo "::notice title=First::$(grep -m1 'EADDRINUSE' "$RUNNER_TEMP/out.txt")"
           exit 0
 
