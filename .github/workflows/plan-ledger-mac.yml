@@ -17,14 +17,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15, files: 2, try: 1 }
-          - { runner: macos-15, files: 2, try: 2 }
-          - { runner: macos-15, files: 2, try: 3 }
-          - { runner: macos-15, files: 2, try: 4 }
-          - { runner: macos-15, files: 2, try: 5 }
           - { runner: macos-15, files: 3, try: 1 }
           - { runner: macos-15, files: 3, try: 2 }
+          - { runner: macos-15, files: 3, try: 3 }
           - { runner: ubuntu-24.04, files: 3, try: 1 }
+          - { runner: ubuntu-24.04, files: 3, try: 2 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
