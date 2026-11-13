@@ -1,0 +1,57 @@
+# Fork only: runs the ledger suite as upstream's Checks runs it, many times,
+# on main and on main with the open flaky-test fixes (#170 and NEW-1874), and
+# names every test that fails. Half the runs keep every core busy.
+name: Plan ledger flake hunt
+
+on:
+  push:
+    branches: [plan/ledger-flake-hunt]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ledger:
+    name: ledger (${{ matrix.code }}, ${{ matrix.load }}, ${{ matrix.try }})
+    strategy:
+      fail-fast: false
+      matrix:
+        code: [main, fixed]
+        load: [quiet, busy]
+        try: [1, 2, 3]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ matrix.code == 'main' && 'New-Altitude/Oddboro' || 'itsryanb/Oddboro' }}
+          ref: ${{ matrix.code == 'main' && 'main' || 'plan/ledger-flake-fixed' }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Keep every core busy
+        if: matrix.load == 'busy'
+        run: for i in $(seq "$(nproc)"); do (while :; do :; done) & done
+
+      - name: Ledger tests
+        timeout-minutes: 10
+        run: |
+          echo "::notice title=Code::$(git log --oneline -1)"
+          status=0
+          npm test -w @oddboro/ledger > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
+          echo "::notice title=Summary::$(grep -E '^ℹ (tests|pass|fail|cancelled|skipped|duration_ms) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ')"
+          grep -E '^✖ ' "$RUNNER_TEMP/out.txt" | grep -v 'failing tests' | sort -u | head -20 | while read -r line; do
+            echo "::error title=Failed::$line"
+          done
+          if grep -q '^✖ failing tests:' "$RUNNER_TEMP/out.txt"; then
+            detail=$(sed -n '/^✖ failing tests:/,$p' "$RUNNER_TEMP/out.txt" | grep -v '^\s*at ' | head -150 \
+              | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
+            echo "::notice title=Why::$detail"
+          fi
+          exit $status
