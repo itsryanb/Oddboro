@@ -34,7 +34,7 @@ import {
 } from 'node:fs';
 import { arch, release, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 import {
   accessibilityPage,
@@ -304,6 +304,59 @@ function report(): never {
 
 let currentRun: ReturnType<typeof makeRun> | undefined;
 
+/**
+ * The page's own api.ts, run from Node against the release build with only
+ * the Origin a browser adds. SvelteKit's origin check runs only in a release
+ * build, which is how 0.0.5's bodiless DELETE passed every test and failed in
+ * the app (#25). That request is the control: a server that takes it runs no
+ * check, and the row proves nothing.
+ */
+async function pageWrites(): Promise<string> {
+  const control = await fetch(`${BASE}/api/pokes/999999`, {
+    method: 'DELETE',
+    headers: { origin: BASE }
+  });
+  if (control.status !== 403)
+    throw new Error(`0.0.5's bodiless DELETE got ${control.status}, not 403: no origin check here`);
+  const seen: string[] = [];
+  const nodeFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set('origin', BASE);
+    const res = await nodeFetch(new URL(String(input), BASE), { ...init, headers });
+    seen.push(`${init.method ?? 'GET'} ${String(input)}: ${res.status}`);
+    return res;
+  }) as typeof fetch;
+  try {
+    const api = (await import(
+      pathToFileURL(join(DESKTOP, '..', 'office', 'src', 'lib', 'ui', 'api.ts')).href
+    )) as {
+      call(url: string, body?: unknown, method?: string): Promise<unknown>;
+      post(url: string, body: unknown, keepalive?: boolean): Promise<Response>;
+      stream(url: string, body: unknown, on: () => void): Promise<void>;
+      sendFile(url: string, file: Blob, name: string, type: string): Promise<unknown>;
+    };
+    const quietly = (p: Promise<unknown>) =>
+      p.then(
+        () => undefined,
+        () => undefined
+      );
+    await quietly(api.call('/api/pokes/999999', undefined, 'DELETE'));
+    await quietly(api.call('/api/pokes/999999', { by: 'smoke' }, 'DELETE'));
+    await quietly(api.post('/api/client-log', { kind: 'boot', message: 'smoke: api.ts' }, true));
+    await quietly(api.stream('/api/staff/nobody/chat', { turnId: 'smoke' }, () => {}));
+    await quietly(
+      api.sendFile('/api/staff/nobody/attachments', new Blob(['smoke']), 'smoke.txt', 'text/plain')
+    );
+  } finally {
+    globalThis.fetch = nodeFetch;
+  }
+  if (seen.length !== 5) throw new Error(`expected 5 requests, saw ${seen.join('; ')}`);
+  const refused = seen.filter((s) => s.endsWith(': 403'));
+  if (refused.length) throw new Error(`refused: ${refused.join('; ')}`);
+  return seen.join('; ');
+}
+
 /** The staged server, run as the app runs it, without the app. */
 async function smokeStage(): Promise<void> {
   const stage = join(DESKTOP, 'stage');
@@ -404,6 +457,11 @@ async function smokeStage(): Promise<void> {
       throw new Error('no page: line in the log');
     return 'logged once, refused without the page';
   });
+  await step(
+    "the page's own writes reach their routes, and 0.0.5's would not (api.ts, #25)",
+    true,
+    pageWrites
+  );
   await step('quits when asked, as the app asks', true, () => stop(server));
   server = start();
   await step('starts again with its data', true, async () => {
