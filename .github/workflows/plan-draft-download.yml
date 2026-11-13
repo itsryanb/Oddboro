@@ -1,0 +1,137 @@
+# Fork only: proves the release draft's download step before it goes upstream.
+# The published 0.0.10's files are laid out as release.yml's five build jobs
+# upload them, beside six result sets named as the smoke job names its own.
+# The draft's step, as release.yml now has it, must hand check-release.ts the
+# five builds alone, and they must pass; the step as main had it must fail
+# the way every release run since #84 has.
+name: Plan draft download
+
+on:
+  push:
+    branches: [plan/draft-download-proof]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  builds:
+    name: build files (${{ matrix.folder }})
+    strategy:
+      matrix:
+        folder: [mac, linux-x86_64, linux-aarch64, windows-x64, windows-arm64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: Lay out 0.0.10's files as this build's job uploads them
+        env:
+          FOLDER: ${{ matrix.folder }}
+        run: |
+          cat > "$RUNNER_TEMP/layout.mjs" <<'EOF'
+          import { execFileSync } from 'node:child_process';
+          import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const { BUILDS, expectedFiles } = await import(
+            join(process.env.GITHUB_WORKSPACE, 'apps/desktop/scripts/check-release.ts')
+          );
+          const v = '0.0.10';
+          const base = `https://github.com/New-Altitude/Oddboro/releases/download/v${v}`;
+          const build = BUILDS.find((b) => b.folder === process.env.FOLDER);
+          const out = join(process.env.RUNNER_TEMP, 'out');
+          mkdirSync(out, { recursive: true });
+          const get = (name) =>
+            execFileSync('curl', ['-fsSL', '--retry', '10', '--retry-all-errors', '--retry-delay', '20',
+              '-o', join(out, name), `${base}/${name}`], { stdio: 'inherit' });
+          for (const f of expectedFiles(build, v)) {
+            if (f === 'latest.json') {
+              get('latest.json');
+              const all = JSON.parse(readFileSync(join(out, f), 'utf8'));
+              all.platforms = { [build.platform]: all.platforms[build.platform] };
+              writeFileSync(join(out, f), JSON.stringify(all, null, 2) + '\n');
+            } else if (f === build.site && existsSync(join(out, build.download(v)))) {
+              copyFileSync(join(out, build.download(v)), join(out, f));
+            } else get(f);
+          }
+          console.log(`${build.folder}: ${expectedFiles(build, v).join(', ')}`);
+          EOF
+          node "$RUNNER_TEMP/layout.mjs"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.folder }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke:
+    name: smoke results (${{ matrix.name }})
+    strategy:
+      matrix:
+        name:
+          - mac-macos-15
+          - linux-x86_64-ubuntu-22.04
+          - linux-x86_64-ubuntu-24.04
+          - linux-aarch64-ubuntu-22.04-arm
+          - windows-x64-windows-latest
+          - windows-arm64-windows-11-arm
+    runs-on: ubuntu-24.04
+    steps:
+      - run: "mkdir -p out && echo '{}' > out/results.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.name }}
+          path: out/
+          retention-days: 1
+
+  draft:
+    needs: [builds, smoke]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+
+      - name: The step below is the one release.yml has
+        run: grep -qF "pattern: '{mac,linux-*,windows-*}'" .github/workflows/release.yml
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/built
+          pattern: '{mac,linux-*,windows-*}'
+
+      - name: Check what the builds made
+        run: |
+          echo "::notice title=Downloaded with the pattern::$(ls "$RUNNER_TEMP/built" | tr '\n' ' ')"
+          node apps/desktop/scripts/check-release.ts --version 0.0.10 \
+            --dir "$RUNNER_TEMP/built" \
+            --url "https://github.com/New-Altitude/Oddboro/releases/download/v0.0.10" \
+            --latest "$RUNNER_TEMP/latest.json" --assets "$RUNNER_TEMP/assets.txt" \
+            | tee "$RUNNER_TEMP/check.txt"
+          echo "::notice title=check-release.ts with the pattern::$(tail -1 "$RUNNER_TEMP/check.txt")"
+
+      - name: The step as main has it fails as every run since #84 has
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/all
+
+      - name: Check what the old step hands it
+        run: |
+          echo "::notice title=Downloaded without the pattern::$(ls "$RUNNER_TEMP/all" | tr '\n' ' ')"
+          if node apps/desktop/scripts/check-release.ts --version 0.0.10 \
+            --dir "$RUNNER_TEMP/all" \
+            --url "https://github.com/New-Altitude/Oddboro/releases/download/v0.0.10" \
+            --latest "$RUNNER_TEMP/latest-all.json" --assets "$RUNNER_TEMP/assets-all.txt" \
+            > "$RUNNER_TEMP/old.txt" 2>&1; then
+            echo "::error title=Control::the old step passed; it should fail as main does"
+            exit 1
+          fi
+          grep -c 'no build by this name belongs in a release' "$RUNNER_TEMP/old.txt" \
+            | xargs -I{} echo "::notice title=Control, as main::check-release.ts refused {} smoke folders, as on main"
