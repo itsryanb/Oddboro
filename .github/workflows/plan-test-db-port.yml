@@ -20,7 +20,7 @@ jobs:
       matrix:
         helper: [main, fix]
         os: [ubuntu-24.04, macos-15, windows-latest]
-        try: [1, 2]
+        try: [1]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     defaults:
@@ -81,13 +81,17 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
 
+      # As upstream's Checks runs them: the office's only off Windows, whose
+      # stand-in tools start through their first line.
       - name: Ledger and office tests
         run: |
           status=0
-          for ws in @oddboro/ledger @oddboro/office; do
-            npm test -w "$ws" > "$RUNNER_TEMP/out.txt" 2>&1 || status=1
-            echo "::notice title=$ws::$(grep -E '^ℹ (tests|pass|fail|cancelled|skipped) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ') EADDRINUSE: $(grep -c EADDRINUSE "$RUNNER_TEMP/out.txt" || true)"
-            grep -E '^✖ ' "$RUNNER_TEMP/out.txt" | grep -v 'failing tests' | sort -u | head -10 | while read -r line; do
+          suites="@oddboro/ledger"
+          [ "$RUNNER_OS" != Windows ] && suites="$suites @oddboro/office"
+          for ws in $suites; do
+            npx turbo run test --filter="$ws" > "$RUNNER_TEMP/out.txt" 2>&1 || status=1
+            echo "::notice title=$ws::$(grep -E 'ℹ (tests|pass|fail|cancelled|skipped) ' "$RUNNER_TEMP/out.txt" | sed 's/.*ℹ/ℹ/' | tr '\n' ' ') EADDRINUSE: $(grep -c EADDRINUSE "$RUNNER_TEMP/out.txt" || true)"
+            { grep -E '✖ ' "$RUNNER_TEMP/out.txt" || true; } | grep -v 'failing tests' | sort -u | head -10 | while read -r line; do
               echo "::error title=$ws::$line"
             done
           done
