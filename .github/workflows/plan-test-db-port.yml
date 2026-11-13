@@ -13,53 +13,6 @@ permissions:
   contents: read
 
 jobs:
-  race:
-    name: 12 at once x5 (${{ matrix.helper }}, ${{ matrix.os }}, ${{ matrix.try }})
-    strategy:
-      fail-fast: false
-      matrix:
-        helper: [main, fix]
-        os: [ubuntu-24.04, macos-15, windows-latest]
-        try: [1]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - run: npm ci --no-audit --no-fund
-
-      - name: main's helper
-        if: matrix.helper == 'main'
-        run: |
-          git fetch -q https://github.com/New-Altitude/Oddboro.git main
-          git checkout FETCH_HEAD -- packages/ledger/test/tool-server.ts
-          grep -c "listen(0" packages/ledger/test/tool-server.ts
-
-      # Forty at once ran the Ubuntu runner out of memory: each file holds a
-      # database of its own.
-      - name: Twelve copies of goal-day-tool.test.ts at once, five rounds
-        working-directory: packages/ledger
-        run: |
-          for n in $(seq 12); do cp test/goal-day-tool.test.ts "test/zz-race-$n.test.ts"; done
-          : > "$RUNNER_TEMP/out.txt"
-          for round in 1 2 3 4 5; do
-            node --test --test-concurrency=12 --test-timeout=60000 --experimental-test-module-mocks \
-              test/zz-race-*.test.ts >> "$RUNNER_TEMP/out.txt" 2>&1 || true
-          done
-          inuse=$(grep -c "EADDRINUSE" "$RUNNER_TEMP/out.txt" || true)
-          files=$(grep -cE '^✖ test/zz-race' "$RUNNER_TEMP/out.txt" || true)
-          echo "::notice title=${{ matrix.helper }}::of 60 file runs, $files failed; EADDRINUSE lines: $inuse"
-          [ "$inuse" -gt 0 ] && echo "::notice title=First::$(grep -m1 'EADDRINUSE' "$RUNNER_TEMP/out.txt")"
-          exit 0
-
   suites:
     name: suites (${{ matrix.os }})
     strategy:
@@ -91,8 +44,7 @@ jobs:
           for ws in $suites; do
             npx turbo run test --filter="$ws" > "$RUNNER_TEMP/out.txt" 2>&1 || status=1
             echo "::notice title=$ws::$(grep -E 'ℹ (tests|pass|fail|cancelled|skipped) ' "$RUNNER_TEMP/out.txt" | sed 's/.*ℹ/ℹ/' | tr '\n' ' ') EADDRINUSE: $(grep -c EADDRINUSE "$RUNNER_TEMP/out.txt" || true)"
-            { grep -E '✖ ' "$RUNNER_TEMP/out.txt" || true; } | grep -v 'failing tests' | sort -u | head -10 | while read -r line; do
-              echo "::error title=$ws::$line"
-            done
+            grep -E '✖ ' "$RUNNER_TEMP/out.txt" | grep -v 'failing tests' | sort -u | head -10 > "$RUNNER_TEMP/failed.txt" || true
+            while read -r line; do echo "::error title=$ws::$line"; done < "$RUNNER_TEMP/failed.txt"
           done
           exit $status
