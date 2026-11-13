@@ -1,0 +1,89 @@
+# Fork only: proves fix/test-db-port-race. Forty copies of a ledger test file
+# that starts a test database run at once, on main's helper and on the fix's,
+# and every EADDRINUSE is counted; then the ledger and office suites run as
+# upstream's Checks runs them, on all three systems.
+name: Plan test database port
+
+on:
+  push:
+    branches: [plan/test-db-port-proof]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  race:
+    name: 40 at once (${{ matrix.helper }}, ${{ matrix.os }}, ${{ matrix.try }})
+    strategy:
+      fail-fast: false
+      matrix:
+        helper: [main, fix]
+        os: [ubuntu-24.04, macos-15, windows-latest]
+        try: [1, 2]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: main's helper
+        if: matrix.helper == 'main'
+        run: |
+          git fetch -q https://github.com/New-Altitude/Oddboro.git main
+          git checkout FETCH_HEAD -- packages/ledger/test/tool-server.ts
+          grep -c "listen(0" packages/ledger/test/tool-server.ts
+
+      - name: Forty copies of goal-day-tool.test.ts at once
+        working-directory: packages/ledger
+        run: |
+          for n in $(seq 40); do cp test/goal-day-tool.test.ts "test/zz-race-$n.test.ts"; done
+          status=0
+          node --test --test-concurrency=40 --test-timeout=60000 --experimental-test-module-mocks \
+            test/zz-race-*.test.ts > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
+          inuse=$(grep -c "EADDRINUSE" "$RUNNER_TEMP/out.txt" || true)
+          echo "::notice title=${{ matrix.helper }}::$(grep -E '^ℹ (tests|pass|fail) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ') EADDRINUSE lines: $inuse"
+          [ "$inuse" -gt 0 ] && echo "::notice title=First::$(grep -m1 'EADDRINUSE' "$RUNNER_TEMP/out.txt")"
+          exit 0
+
+  suites:
+    name: suites (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Ledger and office tests
+        run: |
+          status=0
+          for ws in @oddboro/ledger @oddboro/office; do
+            npm test -w "$ws" > "$RUNNER_TEMP/out.txt" 2>&1 || status=1
+            echo "::notice title=$ws::$(grep -E '^ℹ (tests|pass|fail|cancelled|skipped) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ') EADDRINUSE: $(grep -c EADDRINUSE "$RUNNER_TEMP/out.txt" || true)"
+            grep -E '^✖ ' "$RUNNER_TEMP/out.txt" | grep -v 'failing tests' | sort -u | head -10 | while read -r line; do
+              echo "::error title=$ws::$line"
+            done
+          done
+          exit $status
