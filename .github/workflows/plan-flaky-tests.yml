@@ -1,0 +1,116 @@
+# Fork only. The four test fixes on new-1860-new-1793-new-1879-new-1800-flaky-tests,
+# run on Linux and the Mac with every core kept busy, three times over, as a
+# loaded CI runner or laptop is. Then the sign-in test broken on purpose,
+# once with the fix and once with main's files: with the fix, one test fails
+# and nothing is left running; with main's, the failure spreads.
+name: Plan flaky tests
+
+on:
+  push:
+    branches: [plan/flaky-tests-proof]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  busy:
+    name: busy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build -w @oddboro/sprites
+
+      - name: Keep every core busy
+        run: |
+          cores=$(getconf _NPROCESSORS_ONLN)
+          for i in $(seq 1 $((cores * 2))); do (yes > /dev/null &) ; done
+          echo "::notice title=Load::$((cores * 2)) busy loops on $cores cores"
+
+      - name: The four tests, three times each
+        run: |
+          fails=0
+          for try in 1 2 3; do
+            (cd apps/office && node --test --test-timeout=60000 --experimental-test-module-mocks \
+              src/lib/server/command-stream.test.ts src/lib/server/agent-sign-in.test.ts \
+              src/lib/server/codex-run.test.ts) > "$RUNNER_TEMP/office-$try.txt" 2>&1 || fails=$((fails + 1))
+            (cd packages/ledger && node --test --test-timeout=15000 --experimental-test-module-mocks \
+              test/leaving.test.ts test/folder-asks.test.ts test/access-profile.test.ts test/standing.test.ts) \
+              > "$RUNNER_TEMP/ledger-$try.txt" 2>&1 || fails=$((fails + 1))
+            for part in office ledger; do
+              f="$RUNNER_TEMP/$part-$try.txt"
+              echo "::notice title=Try $try, $part::$(grep -E '^ℹ (tests|pass|fail|cancelled)' "$f" | tr '\n' ' ')"
+              grep -E '^✖ ' "$f" | grep -v 'failing tests' | sort -u | head -5 | while read -r l; do echo "::error title=Try $try, $part::$l"; done
+            done
+          done
+          exit $fails
+
+      - name: Nothing left running
+        if: always()
+        run: |
+          left=$(ps -axo pid=,args= | grep -E 'installers/(npm|bash)|src/mcp\.ts|sleep 60' | grep -v grep || true)
+          if [ -n "$left" ]; then echo "::error title=Left running::$(echo "$left" | tr '\n' ' ')"; exit 1; fi
+          echo "::notice title=Left running::nothing"
+
+  broken:
+    name: broken on purpose (${{ matrix.files }})
+    strategy:
+      fail-fast: false
+      matrix:
+        files: [fixed, main]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build -w @oddboro/sprites
+
+      - name: Use main's test files
+        if: matrix.files == 'main'
+        run: |
+          base=$(git merge-base HEAD origin/main)
+          git checkout "$base" -- apps/office/src/lib/server/agent-sign-in.test.ts apps/office/src/lib/server/office-under-test.ts
+
+      - name: Fail the Install test right after it starts Codex's installer
+        run: |
+          node -e '
+            const fs = require("fs");
+            const f = "apps/office/src/lib/server/agent-sign-in.test.ts";
+            const s = fs.readFileSync(f, "utf8");
+            const at = "const codex = await install(\x27codex\x27);\n      await waitFor(() => installed()[from], \x27the Codex installer\x27);";
+            if (!s.includes(at)) throw new Error("the Install test moved");
+            fs.writeFileSync(f, s.replace(at, at + "\n      assert.fail(\x27broken on purpose\x27);"));'
+
+      - name: Run the sign-in tests
+        run: |
+          cd apps/office
+          set +e
+          timeout 600 node --test --test-timeout=60000 --experimental-test-module-mocks \
+            src/lib/server/agent-sign-in.test.ts > "$RUNNER_TEMP/out.txt" 2>&1
+          code=$?
+          set -e
+          failed=$(grep -E '^✖ ' "$RUNNER_TEMP/out.txt" | grep -v 'failing tests' | sort -u)
+          n=$(echo "$failed" | grep -c . || true)
+          left=$(ps -axo pid=,args= | grep -E 'installers/(npm|bash)' | grep -v grep || true)
+          echo "::notice title=${{ matrix.files }}: ended::exit $code$( [ $code = 124 ] && echo ', held open until the 10-minute limit')"
+          echo "::notice title=${{ matrix.files }}: failed tests ($n)::$(echo "$failed" | cut -c1-140 | tr '\n' '|')"
+          echo "::notice title=${{ matrix.files }}: stand-ins left running::${left:-none}"
+          if [ "${{ matrix.files }}" = fixed ]; then
+            [ "$n" = 1 ] && [ -z "$left" ] && [ $code != 124 ]
+          fi
