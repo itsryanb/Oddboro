@@ -1,0 +1,63 @@
+# Fork only: proves NEW-1895's fix before it goes upstream. The shell's Rust
+# checks, then the debug shell started twice under Xvfb: with
+# ODDBORO_SERVER_URL its launch line must name that server, and without it the
+# port its own server takes.
+name: Plan NEW-1895
+
+on:
+  push:
+    branches: [plan/new-1895-proof]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the libraries Tauri builds against
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev patchelf file build-essential xvfb xauth dbus-x11
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+          rustflags: ''
+          cache-workspaces: apps/desktop/src-tauri -> target
+
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build
+
+      - name: The launch line names what the shell opens
+        run: |
+          python3 -m http.server 4650 --bind 127.0.0.1 > /dev/null 2>&1 &
+          launch() {
+            log="$RUNNER_TEMP/$1.log"
+            shift
+            env ODDBORO_LOG="$log" ODDBORO_HOME="$RUNNER_TEMP/home-$RANDOM" ODDBORO_PORT=4590 \
+              ODDBORO_UPDATE_URL=https://127.0.0.1:9/latest.json "$@" \
+              dbus-run-session -- xvfb-run -a ./target/debug/oddboro > /dev/null 2>&1 &
+            for i in $(seq 1 60); do grep -q 'opening:' "$log" 2>/dev/null && break; sleep 1; done
+            pkill -f target/debug/oddboro || true
+            sleep 2
+            grep -m1 'opening:' "$log"
+          }
+          with_url=$(launch with-url ODDBORO_SERVER_URL=http://127.0.0.1:4650)
+          own=$(launch own)
+          echo "::notice title=With ODDBORO_SERVER_URL::$with_url"
+          echo "::notice title=Without it::$own"
+          echo "$with_url" | grep -q 'server http://127.0.0.1:4650, home' || { echo "::error::the line does not name the server"; exit 1; }
+          if echo "$with_url" | grep -q ', port '; then echo "::error::the line still names a port"; exit 1; fi
+          echo "$own" | grep -q 'port 4590, home' || { echo "::error::the line does not name the port"; exit 1; }
