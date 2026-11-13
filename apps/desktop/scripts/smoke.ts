@@ -177,11 +177,7 @@ async function officeChecks(
   // NEW-1673: the page's own headers are not enough without the owner's key.
   const keyed = !!(await provenKey(r, BASE).catch(() => undefined));
   const bare = async (headers: Record<string, string>) => {
-    const res = await fetch(`${BASE}/api/pokes/999999`, {
-      method: 'DELETE',
-      headers,
-      signal: AbortSignal.timeout(20_000)
-    });
+    const res = await officeFetch(r, '/api/pokes/999999', { method: 'DELETE', headers }, 20, false);
     return { status: res.status, text: (await res.text()).slice(0, 200) };
   };
   await step('refuses a page-shaped write without the owner key', keyed, async () =>
