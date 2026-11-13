@@ -56,8 +56,14 @@ export async function toolServer(staffId: string, env: Record<string, string>): 
 // All at once: one at a time, a file's 36 or 62 servers took up to 11 s of
 // this hook's 15 on GitHub's Mac runner (NEW-1874).
 after(async () => {
+  const t0 = Date.now();
   await Promise.all(clients.map((c) => c.close()));
+  const t1 = Date.now();
   await sql.end();
   await stopDatabase();
   rmSync(folder, { recursive: true, force: true });
+  const file = process.argv[1]?.split(/[\/]/).pop();
+  console.log(
+    `TEARDOWN ${file} clients=${clients.length} close=${t1 - t0}ms rest=${Date.now() - t1}ms`
+  );
 });
