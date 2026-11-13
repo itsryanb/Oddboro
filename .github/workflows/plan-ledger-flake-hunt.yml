@@ -12,6 +12,50 @@ permissions:
   contents: read
 
 jobs:
+  # goal-day-tool.test.ts failed on #169 as a whole file, its one test passing:
+  # an error after the test, which only the file's own output names.
+  goal-day:
+    name: goal-day-tool x40 (${{ matrix.code }}, ${{ matrix.load }})
+    strategy:
+      fail-fast: false
+      matrix:
+        code: [main, fixed]
+        load: [quiet, busy]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ matrix.code == 'main' && 'New-Altitude/Oddboro' || 'itsryanb/Oddboro' }}
+          ref: ${{ matrix.code == 'main' && 'main' || 'plan/ledger-flake-fixed' }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Keep every core busy
+        if: matrix.load == 'busy'
+        run: for i in $(seq "$(nproc)"); do (while :; do :; done) & done
+
+      - name: The file, 40 times, keeping the output of each failure
+        working-directory: packages/ledger
+        run: |
+          failed=0
+          for n in $(seq 40); do
+            if ! node --test --test-timeout=15000 --experimental-test-module-mocks \
+              test/goal-day-tool.test.ts > "$RUNNER_TEMP/run-$n.txt" 2>&1; then
+              failed=$((failed + 1))
+              if [ "$failed" -le 3 ]; then
+                echo "::notice title=Failure $failed (run $n)::$(grep -v '^\s*at ' "$RUNNER_TEMP/run-$n.txt" | head -80 | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
+              fi
+            fi
+          done
+          echo "::notice title=goal-day-tool::$failed of 40 runs failed"
+          [ "$failed" -eq 0 ]
+
   ledger:
     name: ledger (${{ matrix.code }}, ${{ matrix.load }}, ${{ matrix.try }})
     strategy:
