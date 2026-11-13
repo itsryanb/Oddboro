@@ -40,12 +40,15 @@ jobs:
         timeout-minutes: 25
         continue-on-error: true
         env:
-          NODE_OPTIONS: --test-concurrency=${{ matrix.files }} --test-reporter=spec --test-reporter-destination=stdout --test-reporter=../../scripts/test-times.ts --test-reporter-destination=${{ runner.temp }}/test-times/ledger.jsonl
+          NODE_OPTIONS: --test-reporter=spec --test-reporter-destination=stdout --test-reporter=../../scripts/test-times.ts --test-reporter-destination=${{ runner.temp }}/test-times/ledger.jsonl
+        # The ledger's own test script, with --test-concurrency, which
+        # NODE_OPTIONS does not take.
+        working-directory: packages/ledger
         run: |
           mkdir -p "$RUNNER_TEMP/test-times"
           echo "::notice title=Machine::$(node -e 'const o=require("os"); console.log(o.availableParallelism()+" cores, "+Math.round(o.totalmem()/2**30)+" GB, "+o.cpus()[0].model)')"
           start=$(date +%s)
-          npx turbo run test --filter=@oddboro/ledger 2>&1 | tee "$RUNNER_TEMP/out.txt"
+          node --test --test-concurrency=${{ matrix.files }} --test-timeout=15000 --experimental-test-module-mocks "test/*.test.ts" 2>&1 | tee "$RUNNER_TEMP/out.txt"
           status=${PIPESTATUS[0]}
           echo "::notice title=Ledger step::exit $status after $(( $(date +%s) - start )) s"
           exit $status
@@ -70,4 +73,5 @@ jobs:
             const done = lines.find((l) => l.done);
             console.log(`::notice title=Run::${done ? done.done.toFixed(0) + " s" : "did not finish"}, ${started.length} files, unfinished: ${hung.join(", ") || "none"}`);
           '
+          echo "::notice title=Teardowns, slowest close first::$(grep -o 'TEARDOWN.*' "$RUNNER_TEMP/out.txt" | sed 's/TEARDOWN //' | sort -t= -k3 -n -r | head -12 | tr '\n' '|')"
           grep -E "^\s*✖ |timed out|cancelled" "$RUNNER_TEMP/out.txt" | sort -u | head -15 | while read -r l; do echo "::warning title=Failed::$l"; done
