@@ -1,0 +1,79 @@
+# Fork only: proves NEW-1767's test before it goes upstream. As it stands the
+# owner-actions test passes; with the issue's own fault (DELETE
+# /api/pokes/[id] writing a work row) it fails on that row; with a row left
+# without a driver or a reason it fails on that row.
+name: Plan 1767 proof
+
+on:
+  push:
+    branches: [plan/1767-proof]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    name: owner actions (${{ matrix.case }})
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [as-is, poke-writes, row-unaccounted]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        if: matrix.case == 'as-is'
+        run: npm run lint
+
+      - name: Break it as the issue did
+        if: matrix.case == 'poke-writes'
+        run: |
+          f='apps/office/src/routes/api/pokes/[id]/+server.ts'
+          sed -i "s#^import { cancelPoke, pokeNow } from '@oddboro/ledger';#import { cancelPoke, pokeNow, record } from '@oddboro/ledger';#" "$f"
+          sed -i "s#^  if (!(await cancelPoke(Number(params.id)))) error(404, 'No such poke waiting');#&\n  await record({ kind: 'work', actor: 'owner', title: 'Cancelled a poke', body: 'Unseen.' });#" "$f"
+          git diff --stat; grep -n "record" "$f"
+
+      - name: Leave a row with no driver and no reason
+        if: matrix.case == 'row-unaccounted'
+        run: |
+          f=apps/office/src/lib/server/owner-actions.test.ts
+          sed -i "/^  'POST \/api\/setup\/notify': /d" "$f"
+          git diff --stat
+
+      - name: The owner-actions test
+        id: test
+        continue-on-error: ${{ matrix.case != 'as-is' }}
+        run: |
+          npm run build -w @oddboro/sprites
+          cd apps/office
+          npx svelte-kit sync
+          node --test --experimental-test-module-mocks src/lib/server/owner-actions.test.ts \
+            2>&1 | tee "$RUNNER_TEMP/out.txt"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Read the result
+        if: always()
+        env:
+          CASE: ${{ matrix.case }}
+          OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          summary=$(grep -E '^ℹ (tests|pass|fail) ' "$RUNNER_TEMP/out.txt" | tr '\n' ' ')
+          echo "::notice title=$CASE::$OUTCOME. $summary"
+          grep -E '^\s*✖ ' "$RUNNER_TEMP/out.txt" | sort -u | head -8 | while read -r l; do echo "::notice title=$CASE failed::$l"; done
+          case "$CASE" in
+            as-is) [ "$OUTCOME" = success ] ;;
+            poke-writes)
+              [ "$OUTCOME" = failure ] && grep -q "DELETE /api/pokes/\[id\] wrote a ledger row" "$RUNNER_TEMP/out.txt" ;;
+            row-unaccounted)
+              [ "$OUTCOME" = failure ] && grep -q "POST /api/setup/notify" "$RUNNER_TEMP/out.txt" ;;
+          esac
