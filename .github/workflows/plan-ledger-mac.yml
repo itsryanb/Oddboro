@@ -12,17 +12,17 @@ permissions:
 
 jobs:
   ledger:
-    name: ledger (${{ matrix.runner }}, ${{ matrix.try }})
+    name: ledger (${{ matrix.runner }}, ${{ matrix.files }} at once, ${{ matrix.try }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: macos-15, try: 1 }
-          - { runner: macos-15, try: 2 }
-          - { runner: macos-15, try: 3 }
-          - { runner: macos-15, try: 4 }
-          - { runner: macos-15, try: 5 }
-          - { runner: ubuntu-24.04, try: 1 }
+          - { runner: macos-15, files: 2, try: 1 }
+          - { runner: macos-15, files: 2, try: 2 }
+          - { runner: macos-15, files: 3, try: 1 }
+          - { runner: macos-15, files: 3, try: 2 }
+          - { runner: macos-15, files: 4, try: 1 }
+          - { runner: macos-15, files: 4, try: 2 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
@@ -40,7 +40,7 @@ jobs:
         timeout-minutes: 25
         continue-on-error: true
         env:
-          NODE_OPTIONS: --test-reporter=spec --test-reporter-destination=stdout --test-reporter=../../scripts/test-times.ts --test-reporter-destination=${{ runner.temp }}/test-times/ledger.jsonl
+          NODE_OPTIONS: --test-concurrency=${{ matrix.files }} --test-reporter=spec --test-reporter-destination=stdout --test-reporter=../../scripts/test-times.ts --test-reporter-destination=${{ runner.temp }}/test-times/ledger.jsonl
         run: |
           mkdir -p "$RUNNER_TEMP/test-times"
           echo "::notice title=Machine::$(node -e 'const o=require("os"); console.log(o.availableParallelism()+" cores, "+Math.round(o.totalmem()/2**30)+" GB, "+o.cpus()[0].model)')"

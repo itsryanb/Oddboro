@@ -54,8 +54,16 @@ export async function toolServer(staffId: string, env: Record<string, string>): 
 }
 
 after(async () => {
+  const t0 = Date.now();
   for (const c of clients) await c.close();
+  const t1 = Date.now();
   await sql.end();
+  const t2 = Date.now();
   await stopDatabase();
+  const t3 = Date.now();
   rmSync(folder, { recursive: true, force: true });
+  const file = process.argv[1]?.split(/[\\/]/).pop();
+  console.log(
+    `TEARDOWN ${file} clients=${clients.length} close=${t1 - t0}ms sql=${t2 - t1}ms db=${t3 - t2}ms rm=${Date.now() - t3}ms`
+  );
 });
