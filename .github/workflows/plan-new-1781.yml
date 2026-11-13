@@ -45,8 +45,13 @@ jobs:
           rustflags: ''
           cache-workspaces: apps/desktop/src-tauri -> target
 
-      - run: cargo fmt --check
+      - name: cargo fmt --check, with its diff as an annotation
         if: runner.os == 'Linux'
+        run: |
+          if ! cargo fmt --check > "$RUNNER_TEMP/fmt.txt" 2>&1; then
+            echo "::error title=rustfmt::$(head -60 "$RUNNER_TEMP/fmt.txt" | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
+            exit 1
+          fi
 
       - run: cargo clippy --all-targets -- -D warnings
 
