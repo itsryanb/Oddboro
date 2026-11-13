@@ -17,9 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        code: [main, fixed]
+        code: [main]
         load: [busy]
-        try: [1, 2, 3, 4, 5]
+        try: [1, 2, 3]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -36,7 +36,10 @@ jobs:
       - run: npm ci --no-audit --no-fund
 
       - name: The crash monitor, from this branch
-        run: curl -fsSL -o "$RUNNER_TEMP/crash-monitor.mjs" https://raw.githubusercontent.com/itsryanb/Oddboro/plan/ledger-flake-hunt/.github/crash-monitor.mjs
+        run: |
+          base=https://raw.githubusercontent.com/itsryanb/Oddboro/plan/ledger-flake-hunt/.github
+          curl -fsSL -o "$RUNNER_TEMP/crash-monitor.mjs" "$base/crash-monitor.mjs"
+          curl -fsSL -o "$RUNNER_TEMP/slowest.mjs" "$base/slowest.mjs"
 
       - name: Keep every core busy
         if: matrix.load == 'busy'
@@ -48,7 +51,7 @@ jobs:
           CRASH_LOG: ${{ runner.temp }}/crashes.txt
         run: |
           export NODE_OPTIONS="--import=file://$GITHUB_WORKSPACE/.hunt/crash-monitor.mjs"
-          mkdir -p .hunt && cp "$RUNNER_TEMP/crash-monitor.mjs" .hunt/
+          mkdir -p .hunt && cp "$RUNNER_TEMP/crash-monitor.mjs" "$RUNNER_TEMP/slowest.mjs" .hunt/
           echo "::notice title=Code::$(git log --oneline -1)"
           status=0
           npm test -w @oddboro/ledger > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
@@ -64,5 +67,5 @@ jobs:
           if [ -s "$RUNNER_TEMP/crashes.txt" ]; then
             echo "::notice title=Crashes::$(grep -v '^ *at node:' "$RUNNER_TEMP/crashes.txt" | head -60 | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
           fi
-          echo "::notice title=project-tools times::$(grep -E '(✔|✖) only a shared project' "$RUNNER_TEMP/out.txt" | head -3 | tr '\n' ' ')"
+          node .hunt/slowest.mjs "$RUNNER_TEMP/out.txt"
           exit $status
