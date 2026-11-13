@@ -1,4 +1,4 @@
-# Fork only: proves fix/test-db-port-race. Forty copies of a ledger test file
+# Fork only: proves NEW-1907 (fix/test-db-port-race). Twelve copies, five rounds, of a ledger test file
 # that starts a test database run at once, on main's helper and on the fix's,
 # and every EADDRINUSE is counted; then the ledger and office suites run as
 # upstream's Checks runs them, on all three systems.
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   race:
-    name: 40 at once (${{ matrix.helper }}, ${{ matrix.os }}, ${{ matrix.try }})
+    name: 12 at once x5 (${{ matrix.helper }}, ${{ matrix.os }}, ${{ matrix.try }})
     strategy:
       fail-fast: false
       matrix:
