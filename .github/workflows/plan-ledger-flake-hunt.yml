@@ -12,58 +12,14 @@ permissions:
   contents: read
 
 jobs:
-  # goal-day-tool.test.ts failed on #169 as a whole file, its one test passing:
-  # an error after the test, which only the file's own output names.
-  goal-day:
-    name: goal-day-tool x40 (${{ matrix.code }}, ${{ matrix.load }})
-    strategy:
-      fail-fast: false
-      matrix:
-        code: [main, fixed]
-        load: [quiet, busy]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          repository: ${{ matrix.code == 'main' && 'New-Altitude/Oddboro' || 'itsryanb/Oddboro' }}
-          ref: ${{ matrix.code == 'main' && 'main' || 'plan/ledger-flake-fixed' }}
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-
-      - run: npm ci --no-audit --no-fund
-
-      - name: Keep every core busy
-        if: matrix.load == 'busy'
-        run: for i in $(seq "$(nproc)"); do (while :; do :; done) & done
-
-      - name: The file, 40 times, keeping the output of each failure
-        working-directory: packages/ledger
-        run: |
-          failed=0
-          for n in $(seq 40); do
-            if ! node --test --test-timeout=15000 --experimental-test-module-mocks \
-              test/goal-day-tool.test.ts > "$RUNNER_TEMP/run-$n.txt" 2>&1; then
-              failed=$((failed + 1))
-              if [ "$failed" -le 3 ]; then
-                echo "::notice title=Failure $failed (run $n)::$(grep -v '^\s*at ' "$RUNNER_TEMP/run-$n.txt" | head -80 | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
-              fi
-            fi
-          done
-          echo "::notice title=goal-day-tool::$failed of 40 runs failed"
-          [ "$failed" -eq 0 ]
-
   ledger:
     name: ledger (${{ matrix.code }}, ${{ matrix.load }}, ${{ matrix.try }})
     strategy:
       fail-fast: false
       matrix:
         code: [main, fixed]
-        load: [quiet, busy]
-        try: [1, 2, 3]
+        load: [busy]
+        try: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -79,13 +35,20 @@ jobs:
 
       - run: npm ci --no-audit --no-fund
 
+      - name: The crash monitor, from this branch
+        run: curl -fsSL -o "$RUNNER_TEMP/crash-monitor.mjs" https://raw.githubusercontent.com/itsryanb/Oddboro/plan/ledger-flake-hunt/.github/crash-monitor.mjs
+
       - name: Keep every core busy
         if: matrix.load == 'busy'
         run: for i in $(seq "$(nproc)"); do (while :; do :; done) & done
 
       - name: Ledger tests
         timeout-minutes: 10
+        env:
+          CRASH_LOG: ${{ runner.temp }}/crashes.txt
         run: |
+          export NODE_OPTIONS="--import=file://$GITHUB_WORKSPACE/.hunt/crash-monitor.mjs"
+          mkdir -p .hunt && cp "$RUNNER_TEMP/crash-monitor.mjs" .hunt/
           echo "::notice title=Code::$(git log --oneline -1)"
           status=0
           npm test -w @oddboro/ledger > "$RUNNER_TEMP/out.txt" 2>&1 || status=$?
@@ -98,4 +61,8 @@ jobs:
               | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
             echo "::notice title=Why::$detail"
           fi
+          if [ -s "$RUNNER_TEMP/crashes.txt" ]; then
+            echo "::notice title=Crashes::$(grep -v '^ *at node:' "$RUNNER_TEMP/crashes.txt" | head -60 | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')"
+          fi
+          echo "::notice title=project-tools times::$(grep -E '(✔|✖) only a shared project' "$RUNNER_TEMP/out.txt" | head -3 | tr '\n' ' ')"
           exit $status
