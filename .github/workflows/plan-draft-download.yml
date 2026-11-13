@@ -100,7 +100,8 @@ jobs:
           node-version-file: .nvmrc
 
       - name: The step below is the one release.yml has
-        run: grep -qF "pattern: '{mac,linux-*,windows-*}'" .github/workflows/release.yml
+        run: |
+          grep -qF "pattern: '{mac,linux-*,windows-*}'" .github/workflows/release.yml
 
       - uses: actions/download-artifact@v4
         with:
