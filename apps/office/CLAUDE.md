@@ -13,13 +13,16 @@ check that catches a missed place: `docs/architecture.md`.
 `vite build` leaves `@oddboro/*` out of the server build (a Rolldown external
 in `vite.config.ts`), so each package finds its own files beside its code and
 the app ships them whole (`apps/desktop/scripts/stage.ts`). In the app
-(`ODDBORO_APP=1`) `hooks.server.ts` quits on SIGTERM and when stdin closes.
+(`ODDBORO_APP=1`) `hooks.server.ts` quits on SIGTERM and when stdin closes,
+and reads the app's key from stdin first (see "Who the office answers").
 
 What the office says about itself, for the app's log and its smoke test
 (`apps/desktop/CLAUDE.md`, "Smoke tests"). `init` writes an `office:` line
-with the version and system, one per startup step with its time (secrets,
-database, tables, update row) and `office: ready N ms after Node started`;
-a new version's first start writes `office: first start of X after Y`
+with the version and system, one per startup step with its time (the key in
+the app, secrets, database, tables, update row) and `office: ready N ms after Node started`;
+in the app, each time a request computes the setup checks, one
+`office: setup <id> ok` or `fail` line per check (the id and result alone,
+`logSetup`); a new version's first start writes `office: first start of X after Y`
 (`backup.ts` in the ledger). `GET /api/health` serves the same: version,
 pid, uptime, step times, how many pages hold the live line and how many page
 errors came in (`src/lib/server/health.ts`). The page reports its boot and
@@ -1125,11 +1128,12 @@ pieces under 3,900 bytes a line, so no value is on a command line.
     job on time never waits for it. A catch-up shows in In progress as
     "Catching up <N> periods of <job>". The job form sets the kind ("When the
     office was off at run time"). To try it in a running office, move a
-    job's next run into the past from the repo, with that office's database
-    port. The write wakes the clock at once.
+    job's next run into the past from the repo, with that office's home
+    (on Windows, its database port in `ODDBORO_DB_PORT` too). The write wakes
+    the clock at once.
 
     ```sh
-    ODDBORO_DB_PORT=<port> node --input-type=module <<'EOF'
+    ODDBORO_HOME=<home> node --input-type=module <<'EOF'
     import { pg } from '@oddboro/ledger';
     await pg`update jobs set next_run_at = now() - interval '2 days 45 minutes' where name = '<job>'`;
     await pg.end();
@@ -1314,8 +1318,10 @@ pieces under 3,900 bytes a line, so no value is on a command line.
 
 17. **Updates.** The shell (`apps/desktop`) finds, downloads and checks a
     new version, then tells the server through `/api/update`
-    (`src/lib/server/update.ts`). Only the shell may report one: from
-    127.0.0.1 with the `ODDBORO_UPDATE_TOKEN` it passed in. The office picks
+    (`src/lib/server/update.ts`). Only the shell may report one: from this
+    computer (rule 1 of "Who the office answers") with the app's key in its
+    header (`fromShell` in `src/lib/server/app-key.ts`). A release build
+    passes `ODDBORO_UPDATES=1`, which shows Check now. The office picks
     `installAt`: the start of the owner's next window (02:00 to 04:00 office
     time by default, `app_update` in the ledger), or now when the owner presses
     Install now. The rules are in `@oddboro/ledger/update-window`. From 15
@@ -1514,33 +1520,102 @@ address when it answers and is trusted.
 ## Who the office answers
 
 Other pages open in the owner's browser can send requests to the office too,
-so `guardOffice` (`src/lib/server/owner-page.ts`, the first step of the
-server's `handle` in `hooks.server.ts`, before Sentry's) checks every route
-and API request before the route sees it, in every mode. Files built into the
-page (scripts, styles, images) are served before the check. SvelteKit's own
-check stays on as well, for form posts and any action with no content type.
-In a release, whose port moves, the adapter takes the office's origin to be
-https, so that check refuses the owner's own http page. So the page's `call()`
+and so can any program on the owner's computer, so `guardOffice`
+(`src/lib/server/owner-page.ts`, the first step of the server's `handle` in
+`hooks.server.ts`, before Sentry's) checks every route and API request before
+the route sees it, in every mode. Files built into the page (scripts, styles,
+images, under `/_app/`) are served before the check. SvelteKit's own check
+stays on as well, for form posts and any action with no content type. In a
+release, whose port moves, the adapter takes the office's origin to be https,
+so that check refuses the owner's own http page. So the page's `call()`
 (`src/lib/ui/api.ts`) sends every action as JSON, body or not.
 
-1. The Host must be one of the office's names, whatever the port: 127.0.0.1,
+In the desktop app (`ODDBORO_APP`), before the rules below, every request
+must carry the app's key (`src/lib/server/app-key.ts`). Anything without it
+gets 403 and "This office opens only in the Oddboro app. Open Oddboro to see
+it.", reads too, which a browser shows as a plain page.
+
+- The shell makes a fresh key every time it starts Node: 32 bytes from the
+  system's random source, held only in its memory
+  (`apps/desktop/src-tauri/src/key.rs`). Node reads it as the first line on
+  its stdin (`readKey`, from `hooks.server.ts`, which waits for it after
+  making the home private and before the secrets and the database). It is
+  never in a file, the Keychain, the environment, a command line, a URL or a
+  log line: any program running as the owner can read another's environment
+  and command line (`ps -E`). A key that leaks after its Node is gone opens
+  nothing.
+- Before the shell trusts the server on the port, at the first start and
+  every restart, the server proves it holds the key: `GET /api/proof?nonce=`
+  with a fresh nonce of 64 hex digits, answered with HMAC-SHA256 under the
+  key of `oddboro-proof:` and the nonce (`proof`). The route passes the guard
+  without the key, as a GET, and answers nothing but that shape. The label
+  keeps the answer good for nothing else, and it says nothing of the key. A
+  program that took the port cannot answer it, so the window never sends it
+  the cookie.
+- The window carries it in a cookie, `oddboro-key`: HttpOnly, so no page
+  script reads it, SameSite=Strict, and with no expiry, so it ends with the
+  app and the webview never writes it to disk. The shell sets it, after the
+  proof, before the window asks the office for anything, and sets the new
+  start's cookie before the window reloads after a restart. Every request the page makes carries
+  it: `fetch`, the live line (`/api/events`), pictures and music.
+- A cookie names a host but no port, so a picture in an Odd's reply at
+  another port on 127.0.0.1 would carry the key to whatever listens there.
+  The window's pages therefore get a policy (`WINDOW_CSP`): pictures, sound,
+  fonts, frames and connections only from the office itself, `data:`,
+  `blob:` and https.
+- The shell's own requests (`/api/update`, `/api/browser-link`) carry it in
+  the `X-Oddboro-Key` header. That header counts there and nowhere else.
+- Without the key, only these get in: the sign-in callbacks (rule 5), as
+  GETs to those two exact paths; the shell's proof request; a run's call to
+  its gateway with its token; and a link for the owner's browser.
+- The owner's browser has no key. When the window opens an office address in
+  a new window (a file attached in a chat), the shell asks
+  `POST /api/browser-link` for a code for that path and opens the address
+  with `?oddboro-link=<code>`. The code works once, for that path only, as a
+  GET, within a minute (`mintLink`, `takeLink`). Open in browser for a page
+  an Odd built opens the file itself, not an office address, so it needs none.
+
+An office run from source (`npm run dev`, `npm run setup`, the login
+service, the tests) has no key and keeps the rules below alone.
+
+1. The request must come from this computer (`fromThisComputer`): the
+   connection's address and every address in X-Forwarded-For are loopback
+   (127.0.0.0/8, ::1, or ::ffff:127.x), and anything else, an entry that is
+   not a plain address included, gets 403, reads too. Through Caddy the
+   connection is always from 127.0.0.1, and Caddy writes the client it served
+   into that header and drops one the client sent, or adds the real address
+   last when it trusts the client, so this is what keeps another machine on
+   the network out. A program on this computer can write the header too; this
+   rule is not for that. The built server serves the files built into the
+   page before it. Under `vite dev`, which setup and the login service run,
+   the same rule (`src/lib/server/this-computer.ts`) runs first in
+   `onlyThisComputer` (rule 6), so Vite's own routes and its live-reload
+   websocket refuse another machine too.
+2. The Host must be one of the office's names, whatever the port: 127.0.0.1,
    [::1], localhost, the addresses through Caddy (`HOSTS` in
    `src/lib/server/hosts.ts`) and the app's `ORIGIN`. A site that points its
    own name at 127.0.0.1 looks same-origin to the browser, so only the name
    gives it away. A route asked by any other name gets 403.
-2. Anything but GET, HEAD and OPTIONS must come from the owner's page
+3. Anything but GET, HEAD and OPTIONS must come from the owner's page
    (`fromOwnerPage`): Sec-Fetch-Site says same-origin, or, with none, the
    Origin names the Host asked, whatever the scheme, since through Caddy the
    page is https and the office http. With neither, 403.
-3. The one other client is the app's shell, which reports updates to
-   `/api/update` with the token it passed the server (`fromShell` in
-   `src/lib/server/update.ts`).
-4. `/account/callback` and `/connect/callback` arrive as GETs from the
+4. The other clients are the app's shell, which reports updates to
+   `/api/update` and asks for browser links at `/api/browser-link` with the
+   app's key in its header (`fromShell` in `src/lib/server/app-key.ts`), and
+   an Odd's run, which calls `/api/gateway/<connector>` with its token
+   (`fromRun` in `src/lib/server/gateway.ts`).
+5. `/account/callback` and `/connect/callback` arrive as GETs from the
    owner's browser, sent back by the service's sign-in page, so they pass
-   rule 2 with no Origin.
-5. Vite's dev server has its own route, `/__open-in-editor`, that opens a file
-   in an editor and runs before the handle. `noEditorLaunch` in
-   `vite.config.ts` refuses it with 403, always: nothing in the office uses it.
+   rule 3 with no Origin, and in the app they pass without the key. Each
+   finishes only a sign-in whose state the office made and has not spent
+   (`claimSignIn` in `account.ts`, `finishSignIn` in `oauth.ts`).
+6. Vite's dev server answers before the handle. `onlyThisComputer` in
+   `vite.config.ts`, the first plugin, asks rule 1 before Vite's routes and
+   its websocket: another machine gets 403, and its websocket is closed.
+   Vite also has its own route, `/__open-in-editor`, that opens a file in an
+   editor. `noEditorLaunch` refuses it with 403, always, this computer
+   included: nothing in the office uses it.
 
 ## Diagnostics
 
@@ -1711,7 +1786,10 @@ the persona's voice.
    sends the owner's words and the hands' report, cut to fit 4,000
    characters, to `<issuer>/<slug>/stream`. A chat sends its earlier answered
    exchanges and keeps the door's session in the Odd's folder. Any answer but
-   `answered` returns a one-line note and the report, so no work is lost. A
+   `answered` fails the run with a one-line note and the report, so no work
+   is lost and nothing counts as done without the persona: a follow-up drops
+   the hands' Outcome line, and a chat shows no sign-in card (the persona's
+   access is its own, item 5). Stop cancels the call to the door. An answered
    follow-up keeps the hands' Outcome line after the voice. Every other
    run, such as a draft or a follow-up that reads the owner's no or edit
    for a lesson, stays with the hands. Every word sent to the door is in
