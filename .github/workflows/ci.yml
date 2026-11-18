@@ -11,7 +11,7 @@ on:
     branches: [main]
     paths-ignore: ['apps/site/**', 'docs/**']
   push:
-    branches: [main, plan/new-1910-proof-3]
+    branches: [main, plan/new-1910-proof-4]
     paths-ignore: ['apps/site/**', 'docs/**']
 
 permissions:
