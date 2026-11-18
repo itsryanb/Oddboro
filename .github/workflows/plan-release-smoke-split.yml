@@ -1,0 +1,118 @@
+# Fork only: proves release.yml's per-system smoke calls (release-smoke.yml)
+# with the Mac build failing on purpose, as it did from 2026-11-15. The
+# Linux and Windows builds are the published 0.0.11 files. The smoke jobs
+# below are copied from release.yml as they are. It passes only if the Mac
+# smoke is skipped, Linux and Windows are smoke-tested anyway, and the draft
+# stays held back.
+name: Plan release smoke split
+
+on:
+  push:
+    branches: [plan/smoke-each-proof]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        run: echo "version=0.0.11" >> "$GITHUB_OUTPUT"
+
+  mac:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          echo "::error::The Mac build fails on purpose here"
+          exit 1
+
+  linux:
+    needs: version
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          mkdir out
+          curl -fsSL --retry 10 --retry-all-errors --retry-delay 20 -o "out/Oddboro_0.0.11_${{ matrix.arch }}.AppImage" \
+            "https://github.com/New-Altitude/Oddboro/releases/download/v0.0.11/Oddboro_0.0.11_${{ matrix.arch }}.AppImage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: out/
+          retention-days: 1
+
+  windows:
+    needs: version
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          mkdir out
+          curl -fsSL --retry 10 --retry-all-errors --retry-delay 20 -o "out/Oddboro_0.0.11_${{ matrix.arch }}-setup.exe" \
+            "https://github.com/New-Altitude/Oddboro/releases/download/v0.0.11/Oddboro_0.0.11_${{ matrix.arch }}-setup.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: out/
+          retention-days: 1
+
+  smoke-mac:
+    needs: [version, mac]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      machines: '[{"build":"mac","runner":"macos-15"}]'
+
+  # Ubuntu 24.04 runs the x86_64 AppImage too, as a newer system than the one that built it.
+  smoke-linux:
+    needs: [version, linux]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      machines: >-
+        [{"build":"linux-x86_64","runner":"ubuntu-22.04"},
+        {"build":"linux-x86_64","runner":"ubuntu-24.04"},
+        {"build":"linux-aarch64","runner":"ubuntu-22.04-arm"}]
+
+  smoke-windows:
+    needs: [version, windows]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-smoke.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      machines: >-
+        [{"build":"windows-x64","runner":"windows-latest"},
+        {"build":"windows-arm64","runner":"windows-11-arm"}]
+
+  draft:
+    needs: [version, mac, linux, windows, smoke-mac, smoke-linux, smoke-windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "A draft would be made here"
+
+  verdict:
+    if: always()
+    needs: [smoke-mac, smoke-linux, smoke-windows, draft]
+    runs-on: ubuntu-24.04
+    steps:
+      - env:
+          MAC: ${{ needs.smoke-mac.result }}
+          LINUX: ${{ needs.smoke-linux.result }}
+          WINDOWS: ${{ needs.smoke-windows.result }}
+          DRAFT: ${{ needs.draft.result }}
+        run: |
+          echo "::notice title=Split smoke::smoke-mac $MAC, smoke-linux $LINUX, smoke-windows $WINDOWS, draft $DRAFT"
+          [ "$MAC" = skipped ] && [ "$LINUX" = success ] && [ "$WINDOWS" = success ] && [ "$DRAFT" = skipped ]
