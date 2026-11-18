@@ -37,6 +37,7 @@ import { controlScenario, watchScenario, type LiveState } from './scenario-live.
 import { pauser, type Pauser } from './pause.ts';
 import { promptFor, writeReport, type Where } from './report.ts';
 import {
+  doing,
   expect,
   settled,
   sleep,
@@ -224,10 +225,7 @@ const officeLooks = () => [
     async show() {
       const o = await api<Office>('/api/office');
       return [
-        ...o.staff.map(
-          (s) =>
-            `${s.name}: ${o.working[s.id] ?? (o.inProgress[s.id]?.length ? 'waiting' : 'free')}`
-        ),
+        ...o.staff.map((s) => `${s.name}: ${doing(o, s.id) ?? 'free'}`),
         `Desk: ${o.desk.tasks.length} tasks, ${o.desk.asks.length} asks`,
         ...o.desk.tasks.map((t) => `  task #${t.id} ${t.title}`),
         ...o.desk.asks.map((a) => `  ask ${a.title}`)
@@ -455,7 +453,9 @@ else {
 }
 // Kept up after a failure too, so the office can be looked at where it stopped.
 if (hold && !watch && t.up()) {
-  say(`The office stays open at ${t.base} for ${holdMinutes} minutes. Press Ctrl+C to stop it sooner.`);
+  say(
+    `The office stays open at ${t.base} for ${holdMinutes} minutes. Press Ctrl+C to stop it sooner.`
+  );
   say(scenariosHere);
   await new Promise<void>((done) => {
     atEnd = done;

@@ -13,7 +13,7 @@ const CLARIFY = 'No, I meant figures-old.md, not figures.md.';
 export default {
   name: 'tell-lead-no',
   title: 'A "no" passed to the lead keeps what it was about',
-  bug: { id: 'NEW-1740', open: true },
+  bug: { id: 'NEW-1740', open: false },
   plays: [
     {
       odd: 'Fay',
@@ -51,7 +51,16 @@ export default {
       odd: 'Wes',
       when: asked(CLARIFY),
       once: true,
-      acts: (c) => [{ call: 'tell_lead', input: { work: c.notes.work, words: 'No' } }],
+      acts: (c) => [
+        {
+          call: 'tell_lead',
+          input: {
+            work: c.notes.work,
+            words: 'No',
+            reading: 'Pat meant figures-old.md, not the new figures file.'
+          }
+        }
+      ],
       reply: 'Got it, figures-old.md. I passed that to Fay.'
     }
   ],

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { DevState } from '../state.svelte.ts';
+  import type { Work } from '../../staff/work.ts';
 
   let { dev }: { dev: DevState } = $props();
   let open = $state(true);
@@ -16,6 +17,23 @@
     dev.note('dev', text);
   }
 
+  /** A run going now, as the server lists one, made up for the page alone. */
+  function fakeRun(label: string): Work {
+    return {
+      id: -Date.now(),
+      kind: 'job',
+      label,
+      detail: 'From the Dev window',
+      since: new Date().toISOString(),
+      queued: false,
+      steps: 0
+    };
+  }
+  const withRun = (id: string, label: string) => ({
+    ...dev.host.inProgress(),
+    [id]: [fakeRun(label), ...(dev.host.inProgress()[id] ?? [])]
+  });
+
   function inject(kind: 'hand-off' | 'lesson' | 'working-on' | 'working-off' | 'asks') {
     const h = dev.host;
     if (kind === 'hand-off' && who && other) {
@@ -29,13 +47,13 @@
     if (kind === 'working-on' && who) {
       h.inject({
         type: 'working',
-        working: { ...h.working(), [who]: 'A fake run from the Dev window' },
-        inProgress: h.inProgress()
+        chatting: [],
+        inProgress: withRun(who, 'A fake run from the Dev window')
       });
       return done(`Fired working: ${named(who)} runs a fake job (the page only)`);
     }
     if (kind === 'working-off') {
-      h.inject({ type: 'working', working: {}, inProgress: {} });
+      h.inject({ type: 'working', chatting: [], inProgress: {} });
       return done('Fired working: nobody runs anything');
     }
     if (kind === 'asks') {
@@ -55,8 +73,8 @@
     await new Promise((r) => setTimeout(r, 200));
     dev.host.inject({
       type: 'working',
-      working: { ...dev.host.working(), [who]: 'Newer than the fetch' },
-      inProgress: dev.host.inProgress()
+      chatting: [],
+      inProgress: withRun(who, 'Newer than the fetch')
     });
     done(`Race: a newer working event for ${named(who)} arrived while /api/office was held 1.5 s`);
     await new Promise((r) => setTimeout(r, 1700));

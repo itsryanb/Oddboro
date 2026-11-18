@@ -2,7 +2,7 @@
 // jobs that each end badly: one crashes, one hits the plan's usage limit, and
 // one goes quiet until the office gives up on it. After each, Wes must be free
 // and the run must be on record as failed.
-import { expect, RUN_TIMEOUT_MS, until } from '../office.ts';
+import { doing, expect, RUN_TIMEOUT_MS, until } from '../office.ts';
 import type { Scenario, Story } from '../play.ts';
 
 const JOBS = {
@@ -32,13 +32,14 @@ async function runNow(s: Story, id: number): Promise<Run> {
 
 async function wesIsFree(s: Story) {
   const o = await s.settle();
-  expect(!o.working[s.ids.Wes], `Wes still shows as working: "${o.working[s.ids.Wes]}"`);
+  const now = doing(o, s.ids.Wes);
+  expect(!now, `Wes still shows as busy: ${now}`);
 }
 
 export default {
   name: 'stuck-working',
   title: 'A crashed, limited or quiet run leaves the Odd free',
-  bug: { id: 'NEW-1659', open: true },
+  bug: { id: 'NEW-1659', open: false },
   plays: [
     {
       odd: 'Wes',

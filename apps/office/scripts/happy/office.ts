@@ -42,9 +42,22 @@ export type Task = {
 export type OfficeState = {
   staff: { id: string; name: string }[];
   desk: { asks: { id: number; title: string; kind?: string }[]; tasks: Task[] };
-  working: Record<string, string>;
-  inProgress: Record<string, unknown[]>;
+  /** Odds replying to the owner in chat. */
+  chatting: string[];
+  /** Each Odd's runs going or waiting for a slot. */
+  inProgress: Record<string, { label: string; queued: boolean }[]>;
+  /** Follow-ups the office has yet to start. */
+  toStart?: Record<string, unknown[]>;
 };
+
+/** What an Odd does now, in a few words, or undefined when it is free. */
+export function doing(o: OfficeState, id: string): string | undefined {
+  if (o.chatting.includes(id)) return 'replying in chat';
+  const runs = o.inProgress[id] ?? [];
+  const going = runs.find((w) => !w.queued);
+  if (going) return `working on: ${going.label}`;
+  return runs.length ? 'waiting for a slot' : undefined;
+}
 export type Chat = { history: unknown[]; busy: boolean };
 export type Look = { look: unknown; portraitPx: string };
 
@@ -72,7 +85,9 @@ export function expect(ok: unknown, problem: string) {
 
 /** Nobody running or waiting for a slot. */
 export const settled = (o: OfficeState) =>
-  !Object.keys(o.working).length && Object.values(o.inProgress).every((w) => !w.length);
+  !o.chatting.length &&
+  Object.values(o.inProgress).every((w) => !w.length) &&
+  Object.values(o.toStart ?? {}).every((w) => !w.length);
 
 const freePort = () =>
   new Promise<number>((done, fail) => {
@@ -139,7 +154,12 @@ export function throwaway(opts: {
   /** Claude Code's stand-in, laid out where the office looks for Claude Code on this system. */
   function installStandIn() {
     // A stand-in that throws is written down in runs.jsonl, so the report can say so.
+    // The office keeps its own ODDBORO_ variables out of a run's environment,
+    // so the launcher carries the ones the stand-in reads.
     const launcher = `#!/usr/bin/env node
+process.env.ODDBORO_HAPPY_RUNS ??= ${JSON.stringify(runsFile)};
+process.env.ODDBORO_HAPPY_NOTES ??= ${JSON.stringify(notesFile)};
+process.env.ODDBORO_HOME ??= ${JSON.stringify(officeHome)};
 import(${JSON.stringify(STAND_IN)}).catch(async (e) => {
   console.error(e);
   const runs = process.env.ODDBORO_HAPPY_RUNS;

@@ -38,7 +38,7 @@ const windowAsk = async (s: Parameters<Scenario['story']>[0]) =>
 export default {
   name: 'window-leaves',
   title: "A leaving Odd's held work does not keep the window ask on the desk",
-  bug: { id: 'NEW-1784', open: true },
+  bug: { id: 'NEW-1784', open: false },
   plays: [handsOn('Fay', FAYS, 'Wes'), handsOn('Marshall', MARSHALLS, 'Wes')],
   async story(s) {
     const sql = await s.office.sql();

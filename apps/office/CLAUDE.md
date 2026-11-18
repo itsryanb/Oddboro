@@ -2150,7 +2150,7 @@ hired, then plays its story (`scripts/happy/scripted.ts`).
    the scenario fails, so whoever fixed the bug sets `open: false` and the
    scenario guards the fix.
 4. Every throwaway office gives up on a quiet run after 15 s
-   (ODDBORO_RUN_TIMEOUT_MS, read in `staff.ts`). The app and a release never
+   (ODDBORO_RUN_TIMEOUT_MS, read in `run-timeout.ts`). The app and a release never
    read it.
 5. `--json` prints one result for an agent; a failed scenario keeps its folder,
    and `--keep` keeps every one.

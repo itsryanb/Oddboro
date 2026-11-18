@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
   import { TILE, type RoomBounds } from '@oddboro/world';
   import type { DevState } from '../state.svelte.ts';
 
@@ -92,18 +91,16 @@
     return () => clearInterval(t);
   });
 
+  // The floor lost its highlight on main (a7ceef4c), so this brings the camera to the prop instead.
   function highlight() {
-    const d = world.draws.find((x) => x.sprite === sprite && x.obj);
-    if (!d?.obj || !dev.floor) {
-      dev.note('dev', `No placed ${sprite} has an object id to highlight`);
+    const d = world.draws.find((x) => x.sprite === sprite);
+    if (!d || !dev.floor) {
+      dev.note('dev', `No ${sprite} is placed on this floor`);
       return;
     }
-    dev.floor.highlight(d.obj);
     dev.floor.focus(d.x + TILE, d.y + TILE);
-    dev.note('dev', `Highlighted ${d.obj} on the floor`);
+    dev.note('dev', `Moved the camera to ${d.obj ?? sprite}`);
   }
-
-  onDestroy(() => dev.floor?.highlight(undefined));
 </script>
 
 <div class="flex flex-col gap-4 text-xs">
@@ -151,7 +148,7 @@
         <span class="font-medium text-ink">{sprite}</span>
         <span class="flex-1"></span>
         <button class="rounded-md bg-raise px-2 py-1 text-xs hover:bg-sea/20" onclick={highlight}
-          >Highlight on the floor</button
+          >Show on the floor</button
         >
       </div>
       {#if atlasProblem}<p class="text-coral">{atlasProblem}</p>{/if}

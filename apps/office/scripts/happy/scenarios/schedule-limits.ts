@@ -63,31 +63,27 @@ export default {
       bug: true
     });
 
-    // Found by this scenario, past what NEW-1682 says: the schedule the tool
-    // refused is kept anyway, and when the job comes due the clock's error
-    // stops the whole office.
-    await s.step(
-      'The job runs when due, and the office keeps running',
-      async () => {
-        const lines = readFileSync(s.office.logFile, 'utf8').split('\n').length;
-        const before = s.runsOf('Wes', new RegExp(JOB)).length;
-        await s.clock.job(JOB);
-        await until(
-          'the digest to run',
-          async () => !s.office.up() || s.runsOf('Wes', new RegExp(JOB)).length > before
-        );
-        const errors = readFileSync(s.office.logFile, 'utf8')
-          .split('\n')
-          .slice(lines - 1)
-          .filter((l) => /error/i.test(l));
-        expect(
-          s.office.up(),
-          `The office stopped when the job came due: ${errors[0]?.trim() ?? 'no error logged'}`
-        );
-        await s.settle();
-        expect(!errors.length, `The office logged: ${errors[0]?.trim()}`);
-      },
-      { bug: true }
-    );
+    // Found by this scenario, past what NEW-1682 says: the clock used to throw
+    // when the bad schedule came due. That part is fixed on main, so this
+    // step now guards against it coming back.
+    await s.step('The job runs when due, and the office keeps running', async () => {
+      const lines = readFileSync(s.office.logFile, 'utf8').split('\n').length;
+      const before = s.runsOf('Wes', new RegExp(JOB)).length;
+      await s.clock.job(JOB);
+      await until(
+        'the digest to run',
+        async () => !s.office.up() || s.runsOf('Wes', new RegExp(JOB)).length > before
+      );
+      const errors = readFileSync(s.office.logFile, 'utf8')
+        .split('\n')
+        .slice(lines - 1)
+        .filter((l) => /error/i.test(l));
+      expect(
+        s.office.up(),
+        `The office stopped when the job came due: ${errors[0]?.trim() ?? 'no error logged'}`
+      );
+      await s.settle();
+      expect(!errors.length, `The office logged: ${errors[0]?.trim()}`);
+    });
   }
 } satisfies Scenario;

@@ -5,6 +5,7 @@
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SCRIPTS } from './scenario.ts';
+import { doing, type OfficeState } from './office.ts';
 
 export type StepTime = { name: string; ms: number; ok: boolean; error?: string };
 
@@ -28,12 +29,7 @@ export type ReportInput = {
   seconds: number;
 };
 
-type OfficeNow = {
-  staff: { id: string; name: string; role?: string }[];
-  desk: { asks: { id: number; title: string }[]; tasks: { id: number; title: string }[] };
-  working: Record<string, string>;
-  inProgress: Record<string, unknown[]>;
-};
+type OfficeNow = OfficeState & { staff: { id: string; name: string; role?: string }[] };
 
 /** Writes report.md and returns its path. */
 export async function writeReport(r: ReportInput): Promise<string> {
@@ -71,9 +67,8 @@ export async function writeReport(r: ReportInput): Promise<string> {
           `It is still running at ${r.base}.`,
           '',
           ...office.staff.map((o) => {
-            const doing = o.id in office.working ? `working on: ${office.working[o.id]}` : 'free';
             const queued = office.inProgress[o.id]?.length ?? 0;
-            return `- ${o.name} (${o.id}): ${doing}${queued ? `, ${queued} piece(s) of work in progress` : ''}`;
+            return `- ${o.name} (${o.id}): ${doing(office, o.id) ?? 'free'}${queued ? `, ${queued} piece(s) of work in progress` : ''}`;
           }),
           '',
           `Desk: ${office.desk.tasks.length} task(s), ${office.desk.asks.length} ask(s).`,

@@ -82,8 +82,12 @@ export default {
       odd: 'Wes',
       when: new RegExp(BY_COPY),
       once: true,
-      // The brief lists the copy by its full path, under "Files Marshall handed you".
-      acts: (c) => [{ read: /^\s+- (.*handed.plan\.md)$/m.exec(c.thisRun)?.[1] ?? 'plan.md' }],
+      // The brief names the handed file by its full path: "Files for this work, in reach: ...".
+      acts: (c) => [
+        {
+          read: /Files for this work, in reach: ([^,\n]*plan\.md)/.exec(c.thisRun)?.[1] ?? 'plan.md'
+        }
+      ],
       reply: 'Built it from the plan.'
     },
     {
@@ -96,6 +100,7 @@ export default {
   ],
   async story(s) {
     const home = s.office.officeHome;
+    let faysPlan = '';
     await s.step('Marshall has Fay draft the plan, and she writes plan.md', async () => {
       await s.chat('Marshall', `${DRAFT} for the launch with Fay.`);
       const sql = await s.office.sql();
@@ -109,6 +114,7 @@ export default {
         findPlan(join(home, 'threads', String(a.id), s.ids.Fay))
       );
       s.office.note('faysPlan', plan);
+      faysPlan = plan;
       await s.settle();
       // Marshall keeps a copy in his own folder, to hand on.
       cpSync(plan, join(home, 'staff', s.ids.Marshall, 'plan.md'));
@@ -123,9 +129,7 @@ export default {
     });
 
     await s.step('Wes reads the copy that came with the hand-off', async () => {
-      const read = s
-        .callsOf('Wes', 'read_file')
-        .find((c) => String(c.input.path).includes('handed'));
+      const read = s.callsOf('Wes', 'read_file').find((c) => String(c.input.path) !== faysPlan);
       expect(read, 'Wes never read the copy');
       expect(read!.ok, `Wes could not read the copy: ${read!.text}`);
     });
@@ -133,9 +137,7 @@ export default {
     await s.step(
       "Wes reads Fay's plan, which the brief names by its path",
       async () => {
-        const read = s
-          .callsOf('Wes', 'read_file')
-          .find((c) => !String(c.input.path).includes('handed'));
+        const read = s.callsOf('Wes', 'read_file').find((c) => String(c.input.path) === faysPlan);
         expect(read, "Wes never read Fay's plan");
         expect(read!.ok, `Wes could not read the file the brief named: ${read!.text}`);
       },

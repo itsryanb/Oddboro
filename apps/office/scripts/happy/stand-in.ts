@@ -81,9 +81,31 @@ function played(index: number): number {
     .filter((l) => l.script === index && l.session === session).length;
 }
 
+/**
+ * The run's message. A chat reads stream-json (`--input-format stream-json`)
+ * and keeps stdin open for more turns, so its first line is the message; any
+ * other run sends plain text and closes stdin.
+ */
+async function readMessage(): Promise<string> {
+  const streamed = after('--input-format') === 'stream-json';
+  let text = '';
+  for await (const chunk of process.stdin) {
+    text += chunk;
+    if (streamed && text.includes('\n')) break;
+  }
+  if (!streamed) return text;
+  process.stdin.destroy();
+  const turn = JSON.parse(text.slice(0, text.indexOf('\n'))) as {
+    message?: { content?: { type: string; text?: string }[] };
+  };
+  return (turn.message?.content ?? [])
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('\n');
+}
+
 async function play() {
-  let message = '';
-  for await (const chunk of process.stdin) message += chunk;
+  const message = await readMessage();
   // Claude Code takes the system prompt either way, so the stand-in does too.
   const promptFile = after('--append-system-prompt-file');
   const system = promptFile

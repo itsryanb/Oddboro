@@ -136,6 +136,50 @@ export const OUTBOUND: readonly Outbound[] = [
     yes: 'The owner opening the office; nothing leaves this computer.'
   },
   {
+    file: 'apps/office/src/lib/dev/path-guard.ts',
+    calls: 2,
+    to: 'The office, on this computer: its dev path-break route.',
+    sends:
+      "Where a walk went through a wall, and a picture of the floor with that walk. Nothing of the owner's.",
+    yes: "A developer's build with the Dev window's three locks open; nothing leaves this computer."
+  },
+  {
+    file: 'apps/office/src/lib/dev/probe.ts',
+    calls: 1,
+    to: 'The office, on this computer: the sprite atlas, for the pixel probe.',
+    sends: "A request for the atlas. Nothing of the owner's.",
+    yes: 'A developer using the pixel probe in the Dev window, behind its three locks; nothing leaves this computer.'
+  },
+  {
+    file: 'apps/office/src/lib/dev/state.svelte.ts',
+    calls: 2,
+    to: "The office, on this computer: the page's own requests, slowed by the Network tab, and the dev state route.",
+    sends:
+      "The page's own requests, unchanged, and a request for the server's state. Nothing more of the owner's.",
+    yes: 'A developer opening the Dev window, behind its three locks; nothing leaves this computer.'
+  },
+  {
+    file: 'apps/office/src/lib/dev/tabs/Gallery.svelte',
+    calls: 1,
+    to: 'The office, on this computer: the sprite atlas, for the Dev window.',
+    sends: "A request for the atlas. Nothing of the owner's.",
+    yes: 'A developer opening the Dev window, behind its three locks; nothing leaves this computer.'
+  },
+  {
+    file: 'apps/office/src/lib/dev/tabs/Light.svelte',
+    calls: 1,
+    to: 'The office, on this computer: its dev render route.',
+    sends: "The hour to render. Nothing of the owner's.",
+    yes: 'A developer pressing Compare in the Dev window, behind its three locks; nothing leaves this computer.'
+  },
+  {
+    file: 'apps/office/src/lib/dev/tabs/Scenarios.svelte',
+    calls: 2,
+    to: 'The office, on this computer: its dev scenario route.',
+    sends: "The name of a scripted scenario to play. Nothing of the owner's.",
+    yes: 'A developer pressing Run here in the Dev window, in a throwaway office only; nothing leaves this computer.'
+  },
+  {
     file: 'apps/office/src/routes/+page.svelte',
     calls: 1,
     to: 'The office, on this computer: its live line of changes.',

@@ -35,8 +35,7 @@
       id: 'stuck-working',
       bug: 'NEW-1659',
       what: 'Wes runs three jobs that crash, hit the usage limit, and go quiet. Each must leave Wes free, with the run on record as failed.',
-      today:
-        'Wes is free each time. The limit run is kept as done, with the limit message as what Wes did.'
+      today: 'Passes: each run ends failed and Wes is free. Fixed on main (d2208a8a).'
     },
     {
       id: 'hand-off-files',
@@ -48,7 +47,7 @@
       id: 'tell-lead-no',
       bug: 'NEW-1740',
       what: 'Pat tells Wes "No, I meant figures-old.md", and Wes passes the "No" to Fay, who leads.',
-      today: 'Fay is told only "Pat\'s words: No", with nothing of what it was about.'
+      today: "Passes: Fay gets Pat's words with Wes's own reading of them. Fixed on main."
     },
     {
       id: 'parked-wake',
@@ -60,15 +59,14 @@
       id: 'window-leaves',
       bug: 'NEW-1784',
       what: "The 5-hour window holds Fay's and Marshall's hand-offs under one ask. Fay leaves, then the window resets.",
-      today:
-        "Marshall's work picks up, but the ask stays on the Desk: Fay's stopped work still holds it."
+      today: 'Passes: the ask leaves the Desk once the window resets. Fixed on main (d49fa75e).'
     },
     {
       id: 'schedule-limits',
       bug: 'NEW-1682',
       what: 'Wes sets his job to daily at 99:99, then every 200 billion minutes, then the job comes due.',
       today:
-        'Both are kept. When the job comes due, the clock throws "Invalid time value" and the office stops.',
+        'Both are kept. The job now runs when due without stopping the office, so only the refusals are still open.',
       stopsOffice: true
     }
   ];

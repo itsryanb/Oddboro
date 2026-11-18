@@ -17,8 +17,9 @@ import { jobBrief, jobWork } from './job-brief.ts';
 import { scheduledFiles } from './scheduled-files.ts';
 import { slot } from './run-state.ts';
 import { run, type Run } from './staff.ts';
+import { runTimeout } from './run-timeout.ts';
 
-const JOB_TIMEOUT_MS = 20 * 60_000;
+const JOB_TIMEOUT_MS = runTimeout(20 * 60_000);
 
 /**
  * Run one job in a fresh session. The staffer walks to its room while it runs.

@@ -43,8 +43,7 @@ export function findPath(
     ]) {
       if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
       const n = idx(nx, ny);
-      // TEMPORARY, to try the path guard: walls are ignored. Undo with `git checkout packages/world/src/path.ts`.
-      if (false && !walkable[n] && n !== goal) continue;
+      if (!walkable[n] && n !== goal) continue;
       if (n === goal && rules.enter && idx(...rules.enter) !== cur) continue;
       if (cur === start && rules.leave && n !== idx(...rules.leave) && n !== goal) continue;
       const score = g.get(cur)! + 1;

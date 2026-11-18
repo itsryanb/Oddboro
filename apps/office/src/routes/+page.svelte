@@ -749,11 +749,27 @@
     actors: () => actors,
     staff: () => staff,
     desk: () => desk,
-    working: () => working,
+    working: () =>
+      Object.fromEntries(
+        Object.entries(inProgress).flatMap(([id, w]) => {
+          const run = w.find((x) => !x.queued);
+          return run ? [[id, run.label]] : [];
+        })
+      ),
     inProgress: () => inProgress,
     messages: () => messages,
-    waiting: () => waiting,
-    threadTag: (id) => threadTags[id],
+    waiting: () =>
+      new Set(
+        Object.entries(oddsNow)
+          .filter(([, n]) => n.show.is === 'waitingOnYou' || n.show.is === 'message')
+          .map(([id]) => id)
+      ),
+    threadTag: (id) => {
+      const s = oddsNow[id]?.show;
+      if (s?.is === 'holding') return { text: s.text };
+      if (s?.is === 'leading') return { text: s.text, waitsOn: s.waitsOn };
+      return undefined;
+    },
     forced: () => forced,
     manual: () => manual,
     setManual(id, on) {
@@ -761,15 +777,10 @@
       else manual = Object.fromEntries(Object.entries(manual).filter(([k]) => k !== id));
     },
     leaveAt: () => leaveAt,
-    words: (a) =>
-      statusOf({
-        id: a.profile.id,
-        name: a.profile.name,
-        activity: a.activity,
-        heading: headingOf(a),
-        x: 0,
-        y: 0
-      }),
+    words: (a) => {
+      const n = oddsNow[a.profile.id];
+      return n ? tagWords(n, headingOf(a)) : a.profile.name;
+    },
     world: () => office.world,
     roomName: (id) => world.rooms.find((r) => r.id === id)?.name,
     taken: (except) => taken(except),

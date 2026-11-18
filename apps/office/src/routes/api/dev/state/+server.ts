@@ -4,7 +4,7 @@
 import { json } from '@sveltejs/kit';
 import { roster } from '@oddboro/ledger';
 import { requireDevTools } from '#lib/server/dev.ts';
-import { inProgress, isBusy, working } from '#lib/server/staff.ts';
+import { chatting, inProgress } from '#lib/server/staff.ts';
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async () => {
@@ -12,9 +12,8 @@ export const GET: RequestHandler = async () => {
   const staff = await roster();
   const mem = process.memoryUsage();
   return json({
-    chatting: staff.filter((s) => isBusy(s.id)).map((s) => s.id),
-    working: { ...working },
-    inProgress: structuredClone(inProgress),
+    chatting: chatting().filter((id) => staff.some((s) => s.id === id)),
+    inProgress: inProgress(),
     server: {
       pid: process.pid,
       upSeconds: Math.round(process.uptime()),

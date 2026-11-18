@@ -39,8 +39,9 @@ import {
 } from './chat-preface.ts';
 import { bus, emit } from './events.ts';
 import { askShellToCheck, MANAGED } from './update.ts';
+import { runTimeout } from './run-timeout.ts';
 
-const CHAT_TIMEOUT_MS = 5 * 60_000;
+const CHAT_TIMEOUT_MS = runTimeout(5 * 60_000);
 
 export function activeReply(id: string) {
   const r = chatRun(id);

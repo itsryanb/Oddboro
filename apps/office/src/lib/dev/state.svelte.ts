@@ -205,7 +205,10 @@ export class DevState {
   private heard(e: OfficeEvent) {
     if (e.type === 'change') this.note('event', `change: ${e.table}`);
     else if (e.type === 'working') {
-      const names = Object.entries(e.working).map(([id, w]) => `${this.name(id)} on "${w}"`);
+      const names = Object.entries(e.inProgress).flatMap(([id, w]) => {
+        const run = w.find((x) => !x.queued);
+        return run ? [`${this.name(id)} on "${run.label}"`] : [];
+      });
       this.note('event', `working: ${names.join(', ') || 'nobody'}`);
       void this.fetchServer();
     } else if (e.type === 'hand-off')
