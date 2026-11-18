@@ -364,8 +364,8 @@ function buildMac(version: string): void {
   stage();
 
   // The hardened Node sidecar loads only libraries carrying the app's team ID.
-  const stage = join(DESKTOP, 'stage');
-  for (const file of [...preparePty(stage), ...searchRuntimeFiles(stage)]) {
+  const staged = join(DESKTOP, 'stage');
+  for (const file of [...preparePty(staged), ...searchRuntimeFiles(staged)]) {
     run('codesign', ['--force', '--options', 'runtime', '--timestamp', '--sign', IDENTITY, file]);
     run('codesign', ['--verify', '--strict', file]);
   }
