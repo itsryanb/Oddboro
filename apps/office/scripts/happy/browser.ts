@@ -77,13 +77,15 @@ export async function onboard(page: Page, owner: string, skip: boolean) {
   await type(`You: type "${owner}"`, welcome.getByPlaceholder('Your first name'), owner);
   await press("You: press That's me", welcome, "That's me");
   // Your AI: the office signs in to Claude of its own before Next opens.
-  const signIn = button(welcome, 'Sign in with Claude');
+  // Main's ClaudeCard says "Sign in to Claude Code"; older builds said "Sign in with Claude".
+  const SIGN_IN = /^Sign in (to Claude Code|with Claude)$/;
+  const signIn = button(welcome, SIGN_IN);
   await signIn
     .or(welcome.getByRole('button', { name: 'Next', disabled: false }))
     .first()
     .waitFor();
   if (await signIn.isVisible())
-    await press('Your AI: press Sign in with Claude', welcome, 'Sign in with Claude');
+    await press('Your AI: press Sign in to Claude Code', welcome, SIGN_IN);
   await press('Your AI: press Next', welcome, 'Next');
   await press('Your office manager: press Next, with Marshall picked', welcome, 'Next');
   await press('Your space: press Next, with Main Street picked', welcome, 'Next');
@@ -148,7 +150,10 @@ export async function pick(page: Page, title: string, answer: string) {
   await act(`Desk: open "${title}"`, page.getByText(title).first(), (t) => t.click());
   for (const box of await page.getByRole('checkbox', { name: /^Mark step \d+ done$/ }).all())
     await act('Desk: tick the step', box, (b) => b.check());
-  const choices = page.getByRole('group', { name: 'Choices' });
+  // The chat shows the same choices now, so the pick stays on the Desk.
+  const desk = page.getByRole('region', { name: 'Your desk' });
+  const choices = desk.getByRole('group', { name: 'Choices' });
   await press(`Desk: pick ${answer}`, choices, answer);
-  await press('Desk: press Mark done', page, 'Mark done');
+  // Main finishes a task with "Save and finish" under its response; older builds said "Mark done".
+  await press('Desk: press Save and finish', desk, /^(Save and finish|Mark done)$/);
 }
