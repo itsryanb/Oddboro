@@ -569,7 +569,7 @@ Run from the repo root.
 ```sh
 npm run shell -w @oddboro/desktop     # tauri dev against ODDBORO_SERVER_URL, default http://127.0.0.1:4500
 npm run bundle -w @oddboro/desktop    # tauri build for this machine: the .app and .dmg, the AppImage, or the installer
-npm run check-types -w @oddboro/desktop   # cargo check
+npm run check-types -w @oddboro/desktop   # tsc on scripts/ and test/, then cargo check
 npm run lint -w @oddboro/desktop      # cargo clippy -D warnings, cargo fmt --check, prettier
 ```
 
