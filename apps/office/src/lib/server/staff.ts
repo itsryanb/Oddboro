@@ -186,8 +186,15 @@ export { chatting, inProgress, isBusy, runsActive, stopRuns } from './run-state.
 /** The owner's data folder, which every staffer may read, whatever tool it runs on. */
 const DATA = home('data');
 const HOMES = home('staff');
-const CHAT_TIMEOUT_MS = 5 * 60_000;
-const JOB_TIMEOUT_MS = 20 * 60_000;
+// A scripted scenario (apps/office/scripts/happy) gives up on a quiet run in
+// seconds, not minutes. The app sets ODDBORO_APP and a release ODDBORO_VERSION,
+// so neither ever reads it.
+const testTimeout =
+  process.env.ODDBORO_APP || process.env.ODDBORO_VERSION
+    ? undefined
+    : Number(process.env.ODDBORO_RUN_TIMEOUT_MS) || undefined;
+const CHAT_TIMEOUT_MS = testTimeout ?? 5 * 60_000;
+const JOB_TIMEOUT_MS = testTimeout ?? 20 * 60_000;
 
 import { isBusy, slot } from './run-state.ts';
 

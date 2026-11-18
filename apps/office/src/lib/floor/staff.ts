@@ -256,6 +256,36 @@ export class StaffActor {
     return !!this.trip;
   }
 
+  /**
+   * A read-only copy of where it is and what moves it, for the Dev window
+   * (src/lib/dev/). The same values the floor uses, never a second answer.
+   */
+  snapshot() {
+    const t = this.trip;
+    return {
+      tile: [...this.tile] as [number, number],
+      path: this.path.map((p) => [...p] as [number, number]),
+      spot: this.spot && {
+        id: this.spot.id,
+        activity: this.spot.activity,
+        room: this.spot.room,
+        tile: this.spot.tile,
+        approach: this.spot.approach
+      },
+      trip: t && {
+        phase: t.phase,
+        to: t.to.profile.id,
+        left: t.left,
+        aim: t.aim,
+        reaims: t.reaims,
+        maxReaims: REAIMS
+      },
+      heldBy: this.heldBy?.profile.id,
+      visits: this.visits.map((v) => v.profile.id),
+      popping: !!this.popping
+    };
+  }
+
   /** The colleague it is on its way to or standing with. */
   get visiting(): StaffActor | undefined {
     return this.trip && this.trip.phase !== 'back' ? this.trip.to : undefined;

@@ -36,6 +36,7 @@ import {
   type World
 } from '@oddboro/world';
 import { dimOf, lookOf, skyBand, type Look, type RGB } from './sky.ts';
+import { SPEED } from './speed.ts';
 import { WeatherLayer } from './weather-layer.ts';
 
 export type Atlas = { sheet: Spritesheet; catalog: SpriteCatalog };
@@ -342,6 +343,7 @@ export class Floor {
     });
     // Pixi draws every frame by default. The floor draws itself when needed.
     app.ticker.remove(app.render, app);
+    app.ticker.speed = SPEED;
     host.appendChild(app.canvas);
     const floor = new Floor(app, world, atlas);
     floor.preview = !!opts.preview;

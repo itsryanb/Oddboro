@@ -87,6 +87,9 @@ npm run reset               # start over: move the office aside into ~/.oddboro/
 npm run db:up               # Postgres in Docker, when .env names it instead of the office's own
 npm run db:migrate          # apply migrations (the office also does it as it starts)
 npm run dev                 # build the sprites, then start the office on :4500
+npm run happy               # a throwaway office through onboarding, two hires and a piece of work; --watch to see it in a browser, --json for agents
+npm run scripted -- --all    # every scripted scenario, each reproducing a known bug (apps/office/CLAUDE.md, Scripted scenarios)
+ODDBORO_DEV_TOOLS=1 npm run dev   # the Dev window: press ` on the floor (apps/office/CLAUDE.md, Dev tools)
 npm run service:install -w apps/office   # run the office at login instead
 npm run sprites             # recompile the art after editing a .px file
 npm run mark -w @oddboro/sprites  # redraw the mark into every icon and logo file, on a Mac

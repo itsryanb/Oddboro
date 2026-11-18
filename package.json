@@ -8,6 +8,8 @@
     "reset": "node packages/ledger/src/reset.ts",
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "happy": "npm run happy -w @oddboro/office --",
+    "scripted": "npm run scripted -w @oddboro/office --",
     "db:up": "docker compose up -d",
     "db:migrate": "npm run migrate -w @oddboro/ledger",
     "db:generate": "npm run generate -w @oddboro/ledger",

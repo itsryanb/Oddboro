@@ -6,6 +6,7 @@
   import type { Floor } from '#lib/floor/engine.ts';
   import type { StaffActor, Pop } from '#lib/floor/staff.ts';
   import type { Beat } from '#lib/floor/reveal.ts';
+  import { paced, SPEED } from '#lib/floor/speed.ts';
   import type { Stage } from '#lib/ui/onboarding/Onboarding.svelte';
   import WeatherPill from '#lib/ui/WeatherPill.svelte';
   import { askWeather, weather } from '#lib/ui/weather.svelte.ts';
@@ -28,6 +29,7 @@
   import OddsRail, { ODDS_RAIL, ODDS_RAIL_OPEN } from '#lib/ui/OddsRail.svelte';
   import type { Work } from '#lib/staff/work.ts';
   import type { LessonEvent, OfficeEvent } from '#lib/server/events.ts';
+  import type { DevHost } from '#lib/dev/host.ts';
   import { account } from '#lib/ui/account.svelte.ts';
   import { personaNews } from '#lib/ui/persona-offers.svelte.ts';
   import { diagnostics } from '#lib/ui/diagnostics.svelte.ts';
@@ -540,7 +542,7 @@
     floor.overview();
     await bus.arrive();
     bus.open();
-    await new Promise((r) => setTimeout(r, 800));
+    await new Promise((r) => setTimeout(r, paced(800)));
     for (const id of ids) {
       riding.delete(id);
       arrived.add(id);
@@ -553,7 +555,7 @@
       if (watching === follow) watching = undefined;
     };
     if (watching) watching = follow;
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, paced(2500)));
     await bus.leave();
   }
 
@@ -710,6 +712,87 @@
   /** The icon over an Odd that keeps a lesson, or uses one. */
   const LESSON_POP: Record<LessonEvent['kind'], Pop> = { kept: 'notebook', used: 'note' };
 
+  /**
+   * The live line from the server and what each event does, outside onMount so
+   * the Dev window can fire an event, drop the line and open it again.
+   */
+  let liveEvents: EventSource | undefined;
+  let onEvent: (e: OfficeEvent) => void = () => {};
+  /** The Dev window's log hears every event first, when it is open. */
+  let devTap: ((e: OfficeEvent) => void) | undefined;
+  function listenLive() {
+    liveEvents = new EventSource('/api/events' satisfies ApiUrl);
+    liveEvents.onmessage = (m) => onEvent(JSON.parse(m.data) as OfficeEvent);
+  }
+
+  // Each free staffer's own clock: it starts when the staffer gets somewhere,
+  // so nobody gets up at the same moment as everyone else. Outside the ticker
+  // so the Dev window can read how long each stay has left.
+  const leaveAt: Record<string, number> = {};
+
+  /**
+   * The Dev window (src/lib/dev/), behind three locks: a dev build, the
+   * server's devTools flag (ODDBORO_DEV_TOOLS=1, never in the app), and the
+   * dynamic import below, so a release never carries its code.
+   */
+  let DevWindow: typeof import('#lib/dev/DevWindow.svelte').default | undefined = $state();
+  let devOpen = $state(false);
+  async function toggleDev() {
+    if (!import.meta.env.DEV || !data.devTools) return;
+    DevWindow ??= (await import('#lib/dev/DevWindow.svelte')).default;
+    devOpen = !devOpen;
+  }
+  /** What the Dev window reads of the page: the same values the floor uses, through getters. */
+  const devHost: DevHost = {
+    floor: () => floor,
+    floorModule: () => F,
+    actors: () => actors,
+    staff: () => staff,
+    desk: () => desk,
+    working: () => working,
+    inProgress: () => inProgress,
+    messages: () => messages,
+    waiting: () => waiting,
+    threadTag: (id) => threadTags[id],
+    forced: () => forced,
+    manual: () => manual,
+    setManual(id, on) {
+      if (on) manual = { ...manual, [id]: 'dev' };
+      else manual = Object.fromEntries(Object.entries(manual).filter(([k]) => k !== id));
+    },
+    leaveAt: () => leaveAt,
+    words: (a) =>
+      statusOf({
+        id: a.profile.id,
+        name: a.profile.name,
+        activity: a.activity,
+        heading: headingOf(a),
+        x: 0,
+        y: 0
+      }),
+    world: () => office.world,
+    roomName: (id) => world.rooms.find((r) => r.id === id)?.name,
+    taken: (except) => taken(except),
+    wearing: (id) => wearing[id],
+    start: () => start,
+    select,
+    inject: (e) => onEvent(e),
+    dropEvents: () => liveEvents?.close(),
+    reconnectEvents() {
+      liveEvents?.close();
+      listenLive();
+    },
+    eventsOpen: () => !!liveEvents && liveEvents.readyState !== EventSource.CLOSED,
+    tap(fn) {
+      devTap = fn;
+      return () => {
+        if (devTap === fn) devTap = undefined;
+      };
+    },
+    refresh: () => refresh(),
+    hour: () => shownHour
+  };
+
   onMount(() => {
     let disposed = false;
     seen = keys(desk);
@@ -732,9 +815,9 @@
     document.addEventListener('visibilitychange', catchUp);
 
     // One live line from the server. Changes arrive as they happen.
-    const events = new EventSource('/api/events' satisfies ApiUrl);
-    events.onmessage = (m) => {
-      const e = JSON.parse(m.data) as OfficeEvent;
+    listenLive();
+    onEvent = (e) => {
+      devTap?.(e);
       if (e.type === 'account') {
         account.status = e.status;
         return;
@@ -786,6 +869,9 @@
         floor.setWeather(sky);
         // Dev only: lets a browser console poke at the floor.
         if (import.meta.env.DEV) (window as unknown as { floor: Floor }).floor = floor;
+        // Dev tools only: every path an Odd walks, checked against the walls (src/lib/dev/path-guard.ts).
+        if (import.meta.env.DEV && data.devTools)
+          void import('#lib/dev/path-guard.ts').then((m) => m.guardPaths(devHost));
         start = arrival(office.world);
         if (firstRun) F.hideBuilding(floor);
         // Land on the whole office, centred on the floor the panels leave showing.
@@ -840,11 +926,9 @@
         floor.onTap = flip;
         floor.onShelf = () => openLessons('all');
 
-        // Each free staffer's own clock: it starts when the staffer gets
-        // somewhere, so nobody gets up at the same moment as everyone else.
-        const leaveAt: Record<string, number> = {};
         floor.app.ticker.add((t) => {
-          const dt = Math.min(0.05, t.deltaMS / 1000);
+          // The ticker runs at the floor's speed (speed.ts), and so does the cap.
+          const dt = Math.min(0.05 * SPEED, t.deltaMS / 1000);
           // The floor can change under the ticker on the first run, so read it fresh.
           const w = office.world;
           const available = new Set(w.spots.map((s) => s.activity));
@@ -906,7 +990,7 @@
       disposed = true;
       clearInterval(timer);
       document.removeEventListener('visibilitychange', catchUp);
-      events.close();
+      liveEvents?.close();
       for (const a of actors) a.destroy();
       floor?.destroy();
     };
@@ -1105,6 +1189,8 @@
     }
     const el = e.target as HTMLElement | null;
     if (el?.closest('input, textarea, select, [contenteditable]')) return;
+    // Backquote, the key games open a developer console with.
+    if (e.key === '`' && data.devTools) return void toggleDev();
     if (e.key === 'd' || e.key === 'D') toggle('desk');
   }
 
@@ -1271,6 +1357,15 @@
               class="busy ms-1.5"
               aria-label="drawing"
             ></span>{/if}</button
+        >
+      {/if}
+      {#if data.devTools}
+        <button
+          class="rounded-full px-3 py-1 text-xs whitespace-nowrap {devOpen
+            ? 'bg-ember/25 text-ink'
+            : 'bg-raise text-muted hover:text-ink'}"
+          title="Dev tools (`)"
+          onclick={toggleDev}>Dev</button
         >
       {/if}
     </div>
@@ -1587,6 +1682,9 @@
     {#await import('#lib/ui/HandOffChoice.svelte') then { default: HandOffChoice }}
       <HandOffChoice name={actCheck.choosing} />
     {/await}
+  {/if}
+  {#if devOpen && DevWindow}
+    <DevWindow host={devHost} onclose={() => (devOpen = false)} />
   {/if}
 </main>
 

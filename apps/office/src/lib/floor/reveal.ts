@@ -7,6 +7,7 @@
 import { Graphics, Sprite, type Container } from 'pixi.js';
 import type { DrawCmd, World } from '@oddboro/world';
 import type { Floor } from './engine.ts';
+import { paced } from './speed.ts';
 
 const TILE = 16;
 const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -21,7 +22,7 @@ function tween(floor: Floor, ms: number, fn: (k: number) => void): Promise<void>
   return new Promise((done) => {
     const t0 = performance.now();
     const step = (now: number) => {
-      const t = Math.min(1, (now - t0) / ms);
+      const t = Math.min(1, (now - t0) / paced(ms));
       fn(1 - (1 - t) ** 3);
       floor.invalidate();
       if (t < 1) requestAnimationFrame(step);
@@ -32,7 +33,7 @@ function tween(floor: Floor, ms: number, fn: (k: number) => void): Promise<void>
 }
 
 const wait = (ms: number) =>
-  reduced() ? Promise.resolve() : new Promise<void>((r) => setTimeout(r, ms));
+  reduced() ? Promise.resolve() : new Promise<void>((r) => setTimeout(r, paced(ms)));
 
 type Part = { d: DrawCmd; s: Sprite; e?: Sprite; y0: number; room?: string };
 type Kind = 'floor' | 'wall' | 'prop';

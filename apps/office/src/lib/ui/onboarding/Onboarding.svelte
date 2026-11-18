@@ -29,6 +29,7 @@
 
 <script lang="ts">
   import { setZone } from '@oddboro/ledger/time';
+  import { paced } from '../../floor/speed.ts';
   import type { StaffProfile } from '../../staff/roster.ts';
   import { AgentTools } from '../agent-tools.svelte.ts';
   import { call, follow, type ApiUrl } from '../api.ts';
@@ -313,7 +314,7 @@
     void reveal(hire, who);
   }
 
-  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, paced(ms)));
   const BEAT = {
     chalk: 'Marking out the rooms.',
     floors: 'Laying the floors.',

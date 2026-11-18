@@ -2082,6 +2082,136 @@ the persona's voice.
    the office once the owner downloads the search model from Setup
    (`POST /api/setup/search`); without it the ledger falls back to words.
 
+## The happy path
+
+`npm run happy` answers "does it still work?" in about 20 seconds, on a Mac,
+Linux or Windows. It starts this checkout's office in a temp folder
+(`scripts/happy/office.ts`), onboards
+an owner, hires two Odds, and works the story in `scripts/happy/scenario.ts`
+to its known end, checking each step. A stand-in for Claude Code
+(`scripts/happy/stand-in.ts`) plays every Odd through the office's own tool
+servers. It needs no sign-in and never touches the owner's office or this
+computer's secret store.
+
+1. A step that fails keeps the folder. It holds `office.log`, `runs.jsonl`
+   (what each run was given, or how the stand-in crashed) and `report.md`
+   (`scripts/happy/report.ts`): each step's time, where the run stopped, what
+   the office held, which line of the story answered each run, each Odd's
+   files and the last log lines. It is written again at every pause, failure
+   and finish, for Claude Code or a person to diagnose from.
+2. `--json` prints one result line, for an agent, with the report's path.
+   `--keep` keeps the folder after a pass. `/happy` in Claude Code
+   (`.claude/commands/happy.md`) runs it and diagnoses from the report.
+3. `--watch` plays the owner through the real page in a browser window
+   (`scripts/happy/browser.ts`, Playwright on the installed Chrome or Edge):
+   the welcome cards and Claude sign-in, the hire window with a look built
+   from parts, the chat box and the Desk. The floor plays at 4 times speed
+   (`--speed 1` to `10`), there is a short pause after each step, and the
+   office stays open at the end, after a failure too, until Ctrl+C.
+4. While `--watch` runs, a bar at the bottom of the page (`scripts/happy/hud.ts`,
+   put in by Playwright, never part of the app) shows the step, the next
+   action and the result, with Pause, Step, Copy for Claude Code (a prompt
+   that points at report.md) and Stop. A pause lands before the next page
+   action, with its target highlighted (`scripts/happy/pause.ts`), and the
+   window stays live, DevTools (F12) included. In the terminal, `p` and `n`
+   do the same, and `o`, `c`, `l` and `f` print the Odds and the Desk,
+   Claude's sign-in as Your AI reads it, the last log lines, and where things
+   are. `--pause-at "Your AI"` watches and pauses before the first action
+   whose name holds those words. A step's time leaves the pause out.
+5. `--ui` plays the same page steps in a hidden browser, with motion reduced so the
+   office goes up at once. A failed step there or in `--watch` saves the page
+   as `failed.png` in the folder.
+6. `?speed=N` in the page's address is what `--speed` sets: `src/lib/floor/speed.ts`
+   speeds up the ticker and divides the waits of the office going up and the
+   bus. Without it the floor plays at 1.
+7. To add to the story, add a play to `SCRIPTS` for what the Odd does
+   (`scripts/happy/play.ts` has every kind of act), then a step in
+   `scripts/happy/run.ts` for what the owner does and checks, with the page's
+   side in `browser.ts`.
+
+## Scripted scenarios
+
+`npm run scripted -- <name>`, or `-- --all`, plays an office situation in
+seconds, the same way every time: each scenario in `scripts/happy/scenarios/`
+gets a throwaway office of its own, onboarded with Marshall and with Wes and Fay
+hired, then plays its story (`scripts/happy/scripted.ts`).
+
+1. A scenario file has the Odds' plays, which the stand-in reads while the
+   runner's notes.json names the file, and the owner's story: chats, API calls,
+   the clock moved on (`clock.job`, `clock.thread`, `clock.windowReset`, which
+   write due times over the database's socket), and a check after each step.
+   The types are in `scripts/happy/play.ts`.
+2. A play can call any tool, write, read, think, crash (`exit`), end on a
+   usage limit (`limit`, whose shape is assumed), go quiet (`hang`), or report
+   the 5-hour window (`usage`). Each call and what it answered goes in
+   runs.jsonl, for the story to check.
+3. A scenario for an open bug marks the step the bug breaks (`{ bug: true }`).
+   While it fails, the scenario counts as known, and passes. Once it passes,
+   the scenario fails, so whoever fixed the bug sets `open: false` and the
+   scenario guards the fix.
+4. Every throwaway office gives up on a quiet run after 15 s
+   (ODDBORO_RUN_TIMEOUT_MS, read in `staff.ts`). The app and a release never
+   read it.
+5. `--json` prints one result for an agent; a failed scenario keeps its folder,
+   and `--keep` keeps every one.
+6. A scenario can also play in an office kept open, such as the one
+   `npm run happy -- --watch` leaves up at the end, so it plays out on that
+   floor: Run here in its Dev window's Scenarios tab, or
+   `npm run scripted -- <name> --office <its folder>` (printed at the end).
+   The office's ports are in the folder's office.json. Marshall, Wes and Fay
+   are found by name, any who left is hired again, and each run is tagged
+   with the scenario's session, so its checks read only its own. A scenario
+   marked `stopsOffice` plays only in an office of its own. While one plays
+   there, the watched run's bar follows it (`scripts/happy/scenario-live.ts`):
+   its step, Pause and Step between steps, Stop, and Copy for Claude Code,
+   which points at scenario-report.md.
+7. Every way an Odd walks is checked against the walls (Dev tools, path
+   guard). In its own office a scenario opens the floor in a hidden browser
+   for that (`--no-floor` skips it). A path through a wall fails the step it
+   lands in, with `path-break-1.png` and on in the folder
+   (`scripts/happy/path-breaks.ts`), and beside each a prompt for Claude Code
+   to fix it (`path-break-1.prompt.md`): the bug, the path, the cell it
+   crosses, the screenshot, where to look and how to check the fix. Prompt on
+   the watched bar and beside the failed step in the Dev window's Scenarios
+   tab copies it. The happy path does the same in `--ui`
+   and `--watch`, and screenshots breaks in a scenario played in its office.
+
+## Dev tools
+
+A prototype of the Dev window: the office's developer tools, built from the
+floor debugger and Scripted Odds specs. It shows only in a developer's build,
+behind three locks: `import.meta.env.DEV`, ODDBORO_DEV_TOOLS=1 in the
+environment or .env (`src/lib/server/dev.ts`), and never with ODDBORO_APP or
+ODDBORO_VERSION. A release build carries none of its code. The happy path's
+throwaway office turns it on.
+
+1. Put ODDBORO_DEV_TOOLS=1 in .env, run `npm run dev`, and press ` (backquote)
+   on the floor, or the Dev button beside Office.
+2. Each tool is a tab in `src/lib/dev/tabs/`. The page hands the window its own
+   state through one object (`devHost` in `+page.svelte`, typed in
+   `src/lib/dev/host.ts`), and `src/lib/dev/state.svelte.ts` holds every hook
+   the window adds to the floor and takes each away when it closes.
+3. The tabs: Odds (server, page and tag side by side, with the checks), Log,
+   Rewind, Layers (keys 1 to 6), Reach, Gallery, Time of day (with
+   `/api/dev/render` beside it), Pixel probe (and the palette scan), Redraws,
+   Puppet, Crowd, Network, Layout and access, Scenarios (runs the happy path
+   or a scripted scenario through `/api/dev/scenario`), and Bug capture.
+4. The routes under `/api/dev/` answer 404 unless the locks are open.
+5. The path guard (`src/lib/dev/path-guard.ts`) runs whenever the locks are
+   open, Dev window or not, on the floor's render hook, over the real Odds and
+   the Crowd tab's ghosts. A path that steps onto a wall with no door, jumps
+   between tiles that do not touch, or crosses a blocked tile before its seat
+   (`path-check.ts`) is shown the way the Rooms and Paths layers show it
+   (`showBreaks` in `overlay.ts`), frozen as it was planned, with the camera
+   on it. The page sends it to `/api/dev/path-break` (beside a throwaway
+   office, or in the office's dev/path-breaks), then, once per tile crossed,
+   a picture of the floor with that walk alone (`path-break-N-floor.png`).
+   The Crowd tab lists each place with a Prompt for Claude Code
+   (`path-prompt.ts`, the runners' wording too); the Layers tab hides, shows
+   and clears the marks.
+6. What is a prototype: ghost Odds have no tags; the redraw meter counts DOM changes in place of
+   Svelte effects. Each tab says so where it applies.
+
 ## Where things live
 
 | Path                                  | What it holds                                                                                                                                                                |

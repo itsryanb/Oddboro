@@ -17,6 +17,7 @@ import { lastRestore } from '@oddboro/ledger/office-backup';
 import { computerWord } from '@oddboro/ledger/system-words';
 import { accountStatus } from '#lib/server/account.ts';
 import { keepAddress } from '#lib/server/address.ts';
+import { devTools } from '#lib/server/dev.ts';
 import { diagnosticsState } from '#lib/server/diagnostics.ts';
 import { currentOffice } from '#lib/server/space.ts';
 import { toProfile } from '#lib/server/profile.ts';
@@ -55,6 +56,8 @@ export const load: PageServerLoad = async () => {
     diagnostics: diagnosticsState(),
     /** The backup this start restored, until the owner closes its line. */
     restored: lastRestore(),
-    account: accountStatus()
+    account: accountStatus(),
+    /** The Dev window, behind its locks (src/lib/server/dev.ts). */
+    devTools: devTools()
   };
 };
