@@ -23,7 +23,16 @@
   import Scenarios from './tabs/Scenarios.svelte';
   import Capture from './tabs/Capture.svelte';
 
-  let { host, onclose }: { host: DevHost; onclose: () => void } = $props();
+  let {
+    host,
+    onclose,
+    ondock
+  }: {
+    host: DevHost;
+    onclose: () => void;
+    /** The width the panel takes at the page's end edge, so the office can make room for it. */
+    ondock?: (px: number) => void;
+  } = $props();
   // svelte-ignore state_referenced_locally
   const dev = new DevState(host);
 
@@ -87,19 +96,48 @@
     if (layer) dev.layers = { ...dev.layers, [layer.id]: !dev.layers[layer.id] };
   }
 
-  // The window moves by its header.
-  let dx = $state(0);
-  let dy = $state(0);
-  function drag(e: PointerEvent) {
-    if ((e.target as HTMLElement).closest('button')) return;
-    const [sx, sy, ox, oy] = [e.clientX, e.clientY, dx, dy];
+  // Docked to the right, full height. Its start edge drags to resize, and it
+  // folds to a strip that still shows the warnings. Both are kept per browser.
+  const MIN_WIDTH = 320;
+  const stored = (key: string) => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const store = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* private window: the panel opens at its defaults next time */
+    }
+  };
+  let width = $state(Math.max(MIN_WIDTH, Number(stored('oddboro.dev.width')) || 420));
+  let folded = $state(stored('oddboro.dev.folded') === '1');
+  $effect(() => store('oddboro.dev.folded', folded ? '1' : '0'));
+  const STRIP = 36;
+  let innerWidth = $state(1280);
+  $effect(() => ondock?.(folded ? STRIP : Math.min(width, innerWidth - 32)));
+  onDestroy(() => ondock?.(0));
+
+  /** Folds the panel to its strip, or opens it again (backquote, from the page). */
+  export function fold() {
+    folded = !folded;
+  }
+
+  function resize(e: PointerEvent) {
+    const [sx, sw] = [e.clientX, width];
+    // The panel sits at the inline end, so in a right-to-left page its edge moves the other way.
+    const dir = getComputedStyle(document.documentElement).direction === 'rtl' ? -1 : 1;
     const move = (m: PointerEvent) => {
-      dx = ox + m.clientX - sx;
-      dy = oy + m.clientY - sy;
+      const max = Math.max(MIN_WIDTH, window.innerWidth - 160);
+      width = Math.round(Math.min(max, Math.max(MIN_WIDTH, sw + (sx - m.clientX) * dir)));
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      store('oddboro.dev.width', String(width));
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -111,7 +149,7 @@
   dev.floorCatch = (fn) => (catcher = fn);
 </script>
 
-<svelte:window onkeydown={onkey} />
+<svelte:window onkeydown={onkey} bind:innerWidth />
 
 {#if catcher}
   <button
@@ -125,32 +163,57 @@
   ></button>
 {/if}
 
-<section
-  class="dev fixed bottom-4 start-4 z-[70] flex flex-col overflow-hidden rounded-xl border border-ember/40 bg-panel-solid text-sm text-ink shadow-2xl"
-  style="translate: {dx}px {dy}px"
-  aria-label="Dev tools"
->
-  <header
-    class="flex cursor-move items-center gap-2 border-b border-hairline px-3 py-2"
-    role="toolbar"
-    aria-label="Drag to move the Dev window"
-    tabindex="-1"
-    onpointerdown={drag}
+{#if folded}
+  <button
+    class="dev-strip fixed z-[70] flex flex-col items-center gap-2 border-s border-ember/40 bg-panel-solid py-3 text-ink shadow-2xl hover:bg-raise"
+    onclick={fold}
+    title="Open the Dev tools (`)"
+    aria-label="Open the Dev tools, {warnings} warnings"
   >
     <span class="font-pixel text-xs tracking-[0.2em] text-ember uppercase">Dev</span>
-    <span class="text-xs text-muted">
+    {#if warnings}
+      <span class="rounded-full bg-coral/25 px-1.5 text-[11px] text-coral">{warnings}</span>
+    {/if}
+  </button>
+{/if}
+
+<section
+  class="dev fixed z-[70] flex flex-col overflow-hidden border-s border-ember/40 bg-panel-solid text-sm text-ink shadow-2xl"
+  class:hidden={folded}
+  style="inline-size: min({width}px, calc(100vw - 2rem))"
+  aria-label="Dev tools"
+>
+  <div
+    class="resize-edge absolute z-10 cursor-ew-resize hover:bg-ember/30"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Drag to resize the Dev tools"
+    onpointerdown={resize}
+  ></div>
+  <header class="flex items-center gap-2 border-b border-hairline px-3 py-2">
+    <span class="font-pixel text-xs tracking-[0.2em] text-ember uppercase">Dev</span>
+    <span class="min-w-0 truncate text-xs text-muted">
       {dev.rows.length} Odds · {#if warnings}<span class="text-coral">{warnings} warnings</span
         >{:else}no warnings{/if}
       {#if dev.server}· server {dev.server.rssMb} MB, up {Math.round(dev.server.upSeconds / 60)} min{/if}
     </span>
     <span class="flex-1"></span>
-    <span class="text-[10px] text-faint">` to close · 1 to 6 layers</span>
+    <button
+      class="rounded-md px-2 text-muted hover:bg-raise hover:text-ink"
+      onclick={fold}
+      title="Fold to the edge (`)"
+      aria-label="Fold">»</button
+    >
     <button
       class="rounded-md px-2 text-muted hover:bg-raise hover:text-ink"
       onclick={onclose}
+      title="Close the Dev tools"
       aria-label="Close">✕</button
     >
   </header>
+  <p class="border-b border-hairline px-3 py-1 text-[10px] text-faint">
+    ` folds · 1 to 6 layers · drag the left edge to resize
+  </p>
   <nav class="flex flex-wrap gap-x-3 gap-y-1 border-b border-hairline px-3 py-2">
     {#each GROUPS as g (g.name)}
       <div class="flex items-center gap-1">
@@ -172,10 +235,18 @@
 </section>
 
 <style>
-  .dev {
-    inline-size: min(720px, calc(100vw - 2rem));
-    block-size: min(560px, calc(100vh - 2rem));
-    resize: both;
+  .dev,
+  .dev-strip {
+    inset-block: 0;
+    inset-inline-end: 0;
+  }
+  .dev-strip {
+    inline-size: 36px;
+  }
+  .resize-edge {
+    inset-block: 0;
+    inset-inline-start: -3px;
+    inline-size: 6px;
   }
   /* A select's list takes its colour from the select with the alpha dropped,
      so bg-raise (white at 6%) lists in solid white under the light ink. */

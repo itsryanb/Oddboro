@@ -737,6 +737,9 @@
    */
   let DevWindow: typeof import('#lib/dev/DevWindow.svelte').default | undefined = $state();
   let devOpen = $state(false);
+  let devWindow: { fold: () => void } | undefined = $state();
+  /** How much of the page's end edge the Dev panel takes; the office shrinks to the rest. */
+  let devDock = $state(0);
   async function toggleDev() {
     if (!import.meta.env.DEV || !data.devTools) return;
     DevWindow ??= (await import('#lib/dev/DevWindow.svelte')).default;
@@ -1201,7 +1204,7 @@
     const el = e.target as HTMLElement | null;
     if (el?.closest('input, textarea, select, [contenteditable]')) return;
     // Backquote, the key games open a developer console with.
-    if (e.key === '`' && data.devTools) return void toggleDev();
+    if (e.key === '`' && data.devTools) return void (devOpen ? devWindow?.fold() : toggleDev());
     if (e.key === 'd' || e.key === 'D') toggle('desk');
   }
 
@@ -1240,7 +1243,7 @@
   >
 </svelte:head>
 
-<main class="fixed inset-0 overflow-clip">
+<main class="fixed inset-0 overflow-clip" style:inset-inline-end="{devDock}px">
   <div
     bind:this={host}
     class="absolute inset-0 transition-opacity duration-700"
@@ -1695,7 +1698,12 @@
     {/await}
   {/if}
   {#if devOpen && DevWindow}
-    <DevWindow host={devHost} onclose={() => (devOpen = false)} />
+    <DevWindow
+      bind:this={devWindow}
+      host={devHost}
+      onclose={() => (devOpen = false)}
+      ondock={(px) => (devDock = px)}
+    />
   {/if}
 </main>
 
