@@ -11,7 +11,8 @@ on:
     branches: [main]
     paths-ignore: ['apps/site/**', 'docs/**']
   push:
-    branches: [main]
+    # Fork only: the Phase 3.1 proof.
+    branches: [main, plan/phase3-1-proof]
     paths-ignore: ['apps/site/**', 'docs/**']
 
 permissions:
