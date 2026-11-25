@@ -89,10 +89,12 @@ export function rows(h: DevHost, chatting: Set<string>): Row[] {
         level: 'warn',
         text: 'Tag says Waiting on you, but nothing on the Desk is from this Odd'
       });
-    if (a.activity === 'work' && !going && !work.length && !manual)
+    // Bug 5 (NEW-1659): main now shows a free Odd at a desk as "At their desk",
+    // so this fires only if the words claim work that is not going.
+    if (/\bWorking\b/.test(words) && !going && !work.length && !manual)
       flags.push({
-        level: 'info',
-        text: `Card says Working, but the server has no run: a free Odd's stay at a desk${leave ? ` (${Math.max(0, Math.round((leave - now) / 1000))} s left)` : ''}`
+        level: 'warn',
+        text: `Says Working, but the server has no run${leave ? ` (a free Odd's stay, ${Math.max(0, Math.round((leave - now) / 1000))} s left)` : ''}`
       });
     if (going && a.activity !== 'work' && !a.onTrip && !manual)
       flags.push({
