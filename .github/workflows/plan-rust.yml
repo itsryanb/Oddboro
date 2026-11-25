@@ -1,0 +1,55 @@
+# Fork only: rustfmt's and clippy's findings as annotations, which the fork's
+# public API serves without a login.
+name: Plan Rust
+
+on:
+  push:
+    branches: [plan/phase3-1-rust]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the libraries Tauri builds against
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev patchelf file build-essential
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+          rustflags: ''
+          cache-workspaces: apps/desktop/src-tauri -> target
+
+      - name: rustfmt
+        if: always()
+        run: |
+          cargo fmt
+          git diff --stat
+          git diff | sed 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }' | xargs -0 -I{} echo "::notice title=rustfmt diff::{}"
+          git diff --quiet
+
+      - name: clippy
+        if: always()
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: tests
+        if: always()
+        run: cargo test
