@@ -820,16 +820,19 @@ export function screenshot(file: string): string {
  * the office's PATH through ODDBORO_EXTRA_PATH, so nothing goes into the
  * owner's own folders. In npm's layout on Windows (a .cmd shim beside
  * node_modules, PR #18's case), a script elsewhere. It answers --version and
- * auth status, nothing more, and adds each call to `ran.txt` beside it, which
- * is how a run sees that the office found it there.
+ * auth status (signed in), and plays any other call as a run of the office
+ * tests' stand-in Claude Code (`scripts/stand-in/run.mjs`), which plays the
+ * steps its message names. It adds each call's first two words to `ran.txt`
+ * beside it, which is how a run sees that the office found it there.
  */
 export function stubClaude(bin: string): { program: string; ran: string } {
   const ran = join(bin, 'ran.txt');
+  const engine = new URL('../../../scripts/stand-in/run.mjs', import.meta.url).href;
   const answers = `const a = process.argv.slice(2).join(' ');
-require('node:fs').appendFileSync(${JSON.stringify(ran)}, a + '\\n');
+require('node:fs').appendFileSync(${JSON.stringify(ran)}, process.argv.slice(2, 4).join(' ') + '\\n');
 if (a === '--version') console.log('9.9.9 (Claude Code)');
 else if (a === 'auth status') console.log(JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }));
-else { console.error('smoke stand-in: ' + a); process.exit(1); }
+else import(${JSON.stringify(engine)}).then((m) => m.run('claude'));
 `;
   if (WIN) {
     const pkg = join(bin, 'node_modules', '@anthropic-ai', 'claude-code');

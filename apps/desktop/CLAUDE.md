@@ -497,7 +497,13 @@ uninstalls. Its stand-in Claude Code sits in a folder
 of its own, first on the office's PATH through `ODDBORO_EXTRA_PATH`, and a
 row requires the office to have run it from there (the stand-in notes each
 call in `ran.txt`). Nothing goes into the owner's own folders, so it runs off
-CI too. Not for `--installed`, whose build may predate both flags.
+CI too. Not for `--installed`, whose build may predate both flags. A run of
+it is the office tests' stand-in Claude Code (`scripts/stand-in/run.mjs`),
+which plays the steps its message names. On Linux, once onboarded, the
+manager's chat says "Play the scenario smoke-run.": the run's call to the
+office's `raise_ask` goes through the office's own tool server, and the row
+requires its ask on the desk and the scenario's reply in the chat. On a Mac
+and Windows that row is not checked, since the app keeps its key to itself.
 
 The real app's shell keeps its key to itself, so the rows that need the
 office's answers run where a key can come along. `--stage` starts the staged

@@ -17,6 +17,8 @@ first in `npm run lint` through `lint:guards`.
 - `test-summary.ts`. Not a guard: reads those lines and prints each suite's time, the 20 slowest tests, the 10 slowest files and any file that never ended, to the log and the CI run's summary page.
 - `hang-report.ts`. Not a guard: runs a CI test step's command, and if it is still going after the minutes given, records each test process's CPU and state, its JavaScript stack and what keeps it alive (from Node's report on SIGUSR2), and on a Mac its native stack, then stops the step. Windows only runs the command.
 - `lib/files.ts`. The shared file list, comment stripper and reporter.
+- `stand-in/run.mjs`. Not a guard: what a stand-in Claude Code, Grok, Codex or Gemini does in a run, for the office's tests (`office-under-test.ts`) and the installed app's smoke test (`stubClaude`). A run plays the steps its message's last line names (`stepsIn` lists them: stream words, call an office tool for real, report usage, reply, fail, crash, hang, wait for a file, play a scenario file) in that tool's own output format, then the tool's usual reply. Plain JavaScript, since the tool's own Node runs it.
+- `stand-in/scenarios/`. Named scenarios, a step a line, which `Play the scenario <name>.` plays: `smoke-run.txt` is the installed app's run.
 
 ## Later
 

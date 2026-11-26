@@ -1,0 +1,6 @@
+# The installed-app smoke test's run (apps/desktop/scripts/smoke.ts): it
+# streams a few words, puts an ask on the owner's desk through the office's
+# own tool server, and replies.
+Think aloud: Putting the smoke test's ask on the desk.
+Call office raise_ask with {"title":"Smoke test: a run reached the office","why":"The smoke test checks that a run in the installed app reaches the office's tools.","if_approved":"Nothing happens: it is a test."}
+Reply: The smoke test's ask is on your desk.

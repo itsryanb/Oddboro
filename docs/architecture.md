@@ -70,6 +70,7 @@ Before writing a helper, use the one that already does the job.
 | Call the office from the page                           | `call()`, `stream()`, `follow()`                                      | `apps/office/src/lib/ui/api.ts`                        |
 | Fail a lint guard                                       | `report()`                                                            | `scripts/lib/files.ts`                                 |
 | Test against a database, the tool server, or the office | `pglite.ts`, `tool-server.ts`, `office-under-test.ts`                 | `packages/ledger/test/`, `apps/office/src/lib/server/` |
+| Make a stand-in AI tool's run do something              | a step in `stepsIn()`, played by each tool in `run()`                 | `scripts/stand-in/run.mjs`                             |
 
 ## A system that keeps state
 

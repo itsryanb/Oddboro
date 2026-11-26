@@ -269,7 +269,7 @@ type Row = {
   /** What the run does, as a sentence for the test's name. */
   does: string;
   tools: readonly Agent[];
-  /** The message, whose last line carries the stand-in's marker, if any. `dir` is the run's folder. */
+  /** The message, whose last line names the stand-in's steps, if any. `dir` is the run's folder. */
   message: string | ((dir: string) => string);
   /** Claude Code's chat launch, which keeps its input open for added words (`turn`). */
   streamed?: true;
@@ -403,6 +403,53 @@ const ROWS: Row[] = [
       assert.deepEqual(end, { outcome: 'timeout', stderr: '' });
       const late = ran.endedAt - ran.deadline;
       assert.ok(Math.abs(late) < 1000, `the run ended ${late} ms after its deadline`);
+    }
+  },
+  {
+    does: 'a run that hangs ends timeout at the deadline it was given',
+    tools: TOOLS,
+    message: 'Hang.',
+    deadlineIn: 1000,
+    check: (end, ran) => {
+      assert.deepEqual(end, { outcome: 'timeout', stderr: '' });
+      const late = ran.endedAt - ran.deadline;
+      assert.ok(Math.abs(late) < 1000, `the run ended ${late} ms after its deadline`);
+    }
+  },
+  {
+    does: 'a run told its words and its usage ends done on those words, and reports that usage',
+    tools: TOOLS,
+    message: 'Think aloud: Working. Use 7 tokens in and 3 out. Reply: All done.',
+    check: (end, ran) => {
+      assert.equal(end.outcome, 'done', JSON.stringify(end));
+      assert.ok(end.outcome === 'done');
+      assert.match(end.text ?? end.spoken, /All done\.$/);
+      const usage = ran.events.flatMap((e) => (e.type === 'usage' ? Object.values(e.usage) : []));
+      assert.deepEqual(
+        usage.map((u) => [u.inputTokens, u.outputTokens]),
+        [[7, 3]]
+      );
+    }
+  },
+  {
+    does: "a run that plays a scenario file plays each of its lines' steps in order",
+    tools: TOOLS,
+    message: (dir) => {
+      const file = join(dir, 'scenario.txt');
+      writeFileSync(
+        file,
+        '# Said first, then the reply.\nThink aloud: From a file.\nReply: Played.\n'
+      );
+      return `Play the scenario ${file}.`;
+    },
+    check: (end, ran) => {
+      assert.equal(end.outcome, 'done', JSON.stringify(end));
+      assert.ok(end.outcome === 'done');
+      const said = ran.events.flatMap((e) =>
+        e.type === 'delta' || e.type === 'message' ? [e.text] : []
+      );
+      assert.ok(said.join('').startsWith('From a file'), said.join(' | '));
+      assert.match(end.text ?? end.spoken, /Played\.$/);
     }
   },
   {
@@ -544,7 +591,7 @@ const ROWS: Row[] = [
   {
     does: 'a success result with no text ends done with no text and the streamed words',
     tools: ['claude'],
-    message: 'Think aloud: Joined words.\nSucceed with no text.',
+    message: 'Think aloud: Joined words. Succeed with no text.',
     check: (end) => {
       assert.equal(end.outcome, 'done', JSON.stringify(end));
       assert.ok(end.outcome === 'done');
@@ -679,13 +726,13 @@ test("an Odd's chat run whose Claude Code result says is_error ends on the resul
 });
 
 test("an Odd's chat run whose result has no text replies with its streamed words, as today", async () => {
-  assert.deepEqual(await chatEnd('cleo', 'Think aloud: Joined words.\nSucceed with no text.'), {
+  assert.deepEqual(await chatEnd('cleo', 'Think aloud: Joined words. Succeed with no text.'), {
     done: 'Joined words'
   });
 });
 
 test('an office run whose result has no text replies with nothing, as today', async () => {
-  assert.deepEqual(await officeRun('Think aloud: Joined words.\nSucceed with no text.'), {
+  assert.deepEqual(await officeRun('Think aloud: Joined words. Succeed with no text.'), {
     ok: true,
     text: ''
   });
@@ -695,7 +742,7 @@ await L.pg`insert into staff ${L.pg([odd('tess', 'Tess')])}`;
 
 test("an Odd's Claude chat shows its streamed reply once", async () => {
   const shown: string[] = [];
-  await chat('tess', 'Think aloud: Some words.\nSend it whole too.', (e) => {
+  await chat('tess', 'Think aloud: Some words. Send it whole too.', (e) => {
     if (e.type === 'delta') shown.push(e.text);
   });
   assert.equal(shown.join(''), 'Some words');

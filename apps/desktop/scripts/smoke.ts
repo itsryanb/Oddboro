@@ -798,6 +798,10 @@ async function smokeApp(): Promise<void> {
       if (!calls) throw new Error(`the stand-in in ${dirname(standIn.program)} never ran`);
       return `it ran: ${[...new Set(calls.split('\n'))].join('; ')}`;
     });
+  const runName = 'a scripted run calls an office tool, and the ask it raised is on the desk';
+  if (standIn && script) await step(runName, true, () => scriptedRun(inPage(script)));
+  else if (standIn)
+    await keptInTheApp(runName, "The office's tests play the same steps on each tool");
   await step('the log has the window loading the page, and the page booting', health, async () => {
     const text = await until(
       'both lines',
@@ -875,6 +879,55 @@ async function smokeApp(): Promise<void> {
       return 'it exited 0, and nothing answers on the port';
     });
   if (installed.uninstall) await step('uninstalls silently', true, installed.uninstall);
+}
+
+/**
+ * A run in the installed app, once it is onboarded: the manager's chat says
+ * "Play the scenario smoke-run.", and the stand-in Claude Code plays that
+ * scenario (`scripts/stand-in/scenarios/smoke-run.txt`). Its call goes through
+ * the office's own tool server, as a real run's would, so the ask it raises
+ * lands on the desk, and the chat ends on the scenario's reply.
+ */
+async function scriptedRun(office: Office): Promise<string> {
+  const { scenario } = (await import(
+    new URL('../../../scripts/stand-in/run.mjs', import.meta.url).href
+  )) as {
+    scenario: (name: string) => { call?: { input: { title?: string } }; reply?: string }[];
+  };
+  const steps = scenario('smoke-run');
+  const title = steps.find((s) => s.call)?.call?.input.title;
+  const reply = steps.find((s) => s.reply !== undefined)?.reply;
+  if (!title || !reply) throw new Error('the smoke-run scenario raises no ask, or has no reply');
+  const { staff } = await office.getJson<{ staff: { id: string }[] }>('/api/office', 30);
+  const manager = staff[0]?.id;
+  if (!manager) throw new Error('the office has no Odd to chat with');
+  // Onboarding starts the manager's hello, a run of its own.
+  await until(
+    `${manager} to finish the run onboarding started`,
+    async () =>
+      (await office.getJson<{ busy: boolean }>(`/api/staff/${manager}/chat`, 30)).busy
+        ? undefined
+        : true,
+    90
+  );
+  const message = { message: 'Play the scenario smoke-run.' };
+  const sent = await office.send(
+    'POST',
+    `/api/staff/${manager}/chat`,
+    pageHeaders(true),
+    message,
+    90
+  );
+  if (sent.status !== 200) throw new Error(`the chat answered ${sent.status}: ${sent.text}`);
+  const { history } = await office.getJson<{ history: unknown[] }>(
+    `/api/staff/${manager}/chat`,
+    30
+  );
+  if (!JSON.stringify(history).includes(reply))
+    throw new Error(`the chat never said "${reply}": ${JSON.stringify(history.slice(-2))}`);
+  const { desk } = await office.getJson<{ desk: unknown }>('/api/office', 30);
+  if (!JSON.stringify(desk).includes(title)) throw new Error(`no ask "${title}" on the desk`);
+  return `${manager} replied "${reply}", and the desk holds "${title}"`;
 }
 
 /**
