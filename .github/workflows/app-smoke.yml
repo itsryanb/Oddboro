@@ -6,6 +6,9 @@
 name: App smoke
 
 on:
+  # Fork only: the Phase 3.3 proof.
+  push:
+    branches: [plan/phase3-3-proof]
   pull_request:
     branches: [main]
     # What goes into the app, as release.yml counts it.
